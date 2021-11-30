@@ -1,0 +1,16 @@
+apiVersion: samma.io/v1  
+kind: Scanner
+metadata: 
+  name: samma-nmap     
+  namespace: samma-io
+spec: 
+ target: www.samma.io
+ scheduler: "2 19 * * *"
+ samma_io_id: "12345"
+ samma_io_tags: 
+      - scanner
+      - prod
+ #samme_io_json: '{"attacke":"true"}'
+ write_to_file: "true"
+ elasticsearch: elasticsearch
+ scanners: ['nmap']

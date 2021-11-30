@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: live
+data:
+  live.sh: |
+      #
+      #
+      # Check if the die file is there and if then die
+      FILE=/out/die
+      if test -f "$FILE"; then
+          echo "$FILE exists. i kill myself"
+          sleep 5
+          kill 1
+      fi
+      exit 0

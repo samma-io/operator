@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: filebeat
+data:
+  filebeat.yml: |
+      #Read diffrent files types from /out folder
+      filebeat.inputs:
+      - type: log
+        paths:
+        - /out/*.json
+        json.keys_under_root: true
+        #json.add_error_key: true
+      - type: log
+        paths:
+        - /out/*.xml
+      - type: log
+        paths:
+        - /out/*.csv
+
+
+      #Output to Elastic
+      output.elasticsearch:
+        hosts: '${ELASTICSEARCH_HOSTS:elasticsearch:9200}'
+        index: samma-io.%{+yyyy.MM.dd}
+
+        #username: '${ELASTICSEARCH_USERNAME:}'
+        #password: '${ELASTICSEARCH_PASSWORD:}'
+
+
+      #output.console:
+      #  pretty: true
+
+
+      #Adding the Samma-io Index and rollover 
+      setup.ilm.enabled: auto
+      setup.ilm.rollover_alias: "samma-io"
+      setup.ilm.pattern: "{now/d}-000001"
+      setup.template.name: "samma-io"
+      setup.template.pattern: "samma-io*"
+      logging.level: debug

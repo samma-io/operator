@@ -1,0 +1,6 @@
+apiVersion: samma.io/v1 
+kind: Scanner
+metadata: 
+  name: matte-testar 
+spec: 
+  nodeport: 30087

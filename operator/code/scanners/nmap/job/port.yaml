@@ -1,0 +1,64 @@
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ NAME }}-port
+spec:
+  template:
+    spec:
+      containers:
+      - name: nmap-portscanner
+        image: sammascanner/nmap:v0.2
+        command: ["python3","/code/nmap_portscanner.py","&","echo","'died_man_die'",">","/out/die"]
+        env:
+          - name: TARGET
+            value: {{ TARGET }}
+          - name: SAMMA_IO_SCANNER
+            value: nmap-portscanner
+          - name: SAMMA_IO_ID
+            value: "00000"
+          - name: SAMMA_IO_TAGS
+            value: "['scanner','base']"
+          - name: SAMMA_IO_JSON
+            value: '{"extra":"value"}'
+          - name: WRITE_TO_FILE
+            value: "true"
+          - name: PARSER
+            value: base
+        volumeMounts:
+          - mountPath: /out
+            name: out-volume
+      - name: filebeat
+        image: docker.elastic.co/beats/filebeat:7.15.0
+        env:
+          - name: ELASTICSEARC
+            value: http://elasticsearch:9200
+        livenessProbe:
+          exec:
+            command:
+              - /bin/sh
+              - '-c'
+              - /live.sh
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        volumeMounts:
+        - name: filebeat
+          mountPath: "/usr/share/filebeat/filebeat.yml"
+          subPath: "filebeat.yml"
+        - name: liveness
+          mountPath: "/live.sh"
+          subPath: "live.sh"
+        - mountPath: /out
+          name: out-volume
+      volumes:
+      - name: filebeat
+        configMap:
+          name: filebeat
+      - name: liveness
+        configMap:
+          name: live
+          defaultMode: 0777
+      - name: out-volume
+        emptyDir: {}
+      restartPolicy: Never
