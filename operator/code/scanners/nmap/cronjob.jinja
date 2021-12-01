@@ -1,0 +1,30 @@
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  name: {{ NAME }}
+spec:
+  schedule: "01 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: nmap-portscanner
+            image: sammascanner/nmap
+            command: ["python","/code/nmap_portscanner.py"]
+            env:
+              - name: TARGET
+                value: "{{TARGET}}"
+          - name: nmap-httprecon
+            image: sammascanner/nmap
+            command: ["python","/code/nmap_httprecon.py"]
+            env:
+              - name: TARGET
+                value: "{{TARGET}}"
+          - name: nmap-tls
+            image: sammascanner/nmap
+            command: ["python","/code/nmap_tlscipher.py"]
+            env:
+              - name: TARGET
+                value: "{{TARGET}}"
+          restartPolicy: Never
