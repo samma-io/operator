@@ -5,7 +5,7 @@ metadata:
   namespace: samma-io
 spec: 
  target: www.samma.io
- scheduler: "2 19 * * *"
+ #scheduler: "2 19 * * *"
  samma_io_id: "12345"
  samma_io_tags: 
       - scanner

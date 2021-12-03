@@ -1,8 +1,11 @@
 import kopf
 import logging
+from kubernetes.client.rest import ApiException
 from kubernetes import client, config, watch
 import yaml
 import json 
+from pprint import pprint
+
 
 #Our code
 from deployJob import deleteJob, deployJob
@@ -35,31 +38,31 @@ def initOperator():
                 if map.metadata.name == name:
                     haveConfigmap= True
         except:
-            print("No configs ")
+            logging.info("No configs ")
         return haveConfigmap
 
     #No confimag is there lets deploy it
     if isConfigMapDeploy('filebeat') == False:
         f = open("code/scanners/core/config-filebeat.yaml", "r")
         toDeploy = yaml.load(f, Loader=Loader)
-        obj = api.create_namespaced_config_map(namespace="samma-io",body=toDeploy) 
+        try:
+            api_response = api.create_namespaced_config_map(namespace="samma-io",body=toDeploy)
+            logging.info(api_response)
+        except ApiException as e:
+            logging.info("Exception when calling WellKnownApi->get_service_account_issuer_open_id_configuration: %s\n" % e)
+    
 
     if isConfigMapDeploy('live') == False:
         f = open("code/scanners/core/config-live.yaml", "r")
         toDeploy = yaml.load(f, Loader=Loader)
-        obj = api.create_namespaced_config_map(namespace="samma-io",body=toDeploy) 
+        try:
+            api_response = api.create_namespaced_config_map(namespace="samma-io",body=toDeploy)
+            logging.info(api_response)
+        except ApiException as e:
+            logging.info("Exception when calling WellKnownApi->get_service_account_issuer_open_id_configuration: %s\n" % e)
 
 
     #Lets install the filebeat config for us
-
-
-
-
-
-
-
-
-
 
 ##
 #Init the initOperator
@@ -75,6 +78,9 @@ def create_fn(body, spec, **kwargs):
     target = body['spec']['target']
     scanners  = body['spec']['scanners'] or ['nmap']
     env_data = {}
+
+    #Set to none we deploy job else we deploy crontab
+    scheduler = "none"
 
     try:
         env_data['samma_io_id'] = body['spec']['samma_io_id'] or "1234"
@@ -96,14 +102,17 @@ def create_fn(body, spec, **kwargs):
         env_data['elasticsearch']= body['spec']['elasticsearch'] or "elasticsearch"
     except:
         pass
-
+    try: 
+        scheduler = body['spec']['scheduler']
+    except:
+        pass
 
     #Deploy the scanners
     for scanner in scanners:
         #What kind of jov do we want. Lets check if there is a scedule tag. 
         # If there is a schudel tag then deploy a cronjob ! 
-        if body['spec']['scheduler']:
-            deployCron(scanner,target,body['spec']['scheduler'])
+        if scheduler != "none":
+            deployCron(scanner,target,scheduler)
         else:
             #Nope no sceduler lets deploy this a job
             deployJob(scanner,target)
@@ -126,10 +135,10 @@ def delete(body, **kwargs):
                 #Nope no sceduler lets delete a job
                 deleteJob(scanner,target)
         except:
-            print("Got some error when deleteing")
+            logging.info("Got some error when deleteing")
 
         
-    print("Delete samma scanners named {0}".format(name))
+    logging.info("Delete samma scanners named {0}".format(name))
     return {'message': "done"} 
 
 
