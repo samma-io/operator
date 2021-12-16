@@ -2,6 +2,7 @@ import os
 import logging
 from jinja2 import Template
 from kubernetes import client, config, watch
+from kubernetes.client.rest import ApiException
 import yaml
 import json 
 
@@ -13,8 +14,6 @@ except ImportError:
 
 
 config.load_incluster_config()
-#api = client.CoreV1Api()
-#cronApi = client.BatchV1Api()
 cronApi = client.BatchV1beta1Api()
 
 
@@ -25,12 +24,12 @@ def deleteCron(scanner,target="samma.io"):
         job= filename.split(".")
         try:
             cronApi.delete_namespaced_cron_job(namespace="samma-io",name="{0}-{1}-{2}".format(scanner,targetName,job[0]))
-            print("Delete samma scanner job {0}".format(scanner))
+            logging.info("Delete samma scanner job {0}".format(scanner))
         except:
             print("error deleting")
 
 
-def deployCron(scanner,target="samma.io",sceduler="15 0 * * * "):
+def deployCron(scanner,target="samma.io",sceduler="15 0 * * * ",env_data={}):
     '''
 
     To deploy a job we go to the service folder.
@@ -39,8 +38,7 @@ def deployCron(scanner,target="samma.io",sceduler="15 0 * * * "):
     targetName = target.replace('.',"-")
 
     for filename in os.listdir("/code/scanners/{0}/cron/".format(scanner)):
-        print("##############################")
-        print(filename)
+        logging.debug(filename)
         haveDeployd=False
         try:
             pods = cronApi.list_namespaced_cron_job("samma-io")
@@ -49,18 +47,21 @@ def deployCron(scanner,target="samma.io",sceduler="15 0 * * * "):
                 if pod.metadata.name == "{0}-{1}".format(scanner,targetName):
                     haveDeployd= True
         except:
-            print("No cronjobs is here")
+            logging.info("Error Cant find CronJob to deploy")
 
         if not haveDeployd:
-                logging.info("############# deploying")
+                logging.info("Deploying")
                 #Open the yaml file
                 
                 f = open("/code/scanners/{0}/cron/{1}".format(scanner,filename), "r")
                 #Add values to 
                 t = Template(f.read())
-                toDeployYaml = t.render(NAME="{0}-{1}".format(scanner,targetName),TARGET=target,SCHEDULER=sceduler)
-                print(toDeployYaml)
+                toDeployYaml = t.render(NAME="{0}-{1}".format(scanner,targetName),TARGET=target,SCHEDULER=sceduler,ENV=env_data)
+                logging.debug(toDeployYaml)
                 #Make to json
                 toDeploy = yaml.load(toDeployYaml, Loader=Loader)
-                obj = cronApi.create_namespaced_cron_job("samma-io", toDeploy) 
-
+                try:
+                    obj = cronApi.create_namespaced_cron_job("samma-io", toDeploy) 
+                except ApiException as e:
+                    logging.info("Exception Cannot create cron job %s\n" % e)
+    

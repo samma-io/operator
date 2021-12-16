@@ -2,6 +2,7 @@ import os
 import logging
 from jinja2 import Template
 from kubernetes import client, config, watch
+from kubernetes.client.rest import ApiException
 import yaml
 import json 
 
@@ -21,12 +22,12 @@ def deleteJob(scanner,target="samma.io"):
     targetName = target.replace('.',"-")
     for filename in os.listdir("/code/scanners/{0}/job/".format(scanner)):
         job= filename.split(".")
-        #try:
-        batch1api.delete_namespaced_job(namespace="samma-io",name="{0}-{1}-{2}".format(scanner,targetName,job[0]))
-        print("Delete samma scanner job {0}".format(scanner))
-        #except:
-        #    print("error deleting")
-def deployJob(scanner,target="samma.io"):
+        try:
+            batch1api.delete_namespaced_job(namespace="samma-io",name="{0}-{1}-{2}".format(scanner,targetName,job[0]))
+            logging.info("Delete samma scanner job {0}-{1}-{2}".format(scanner,targetName,job[0]))
+        except:
+            logging.info("ERROR samma scanner job {0}-{1}-{2}".format(scanner,targetName,job[0]))
+def deployJob(scanner,target="samma.io",env_data={}):
     '''
 
     To deploy a job we go to the service folder.
@@ -44,15 +45,17 @@ def deployJob(scanner,target="samma.io"):
                 haveDeployd= True
     
         if not haveDeployd:
-                logging.info("############# deploying")
-                #Open the yaml file
-                
+                logging.info("Deploying Scanner")
+                #Open the yaml file         
                 f = open("/code/scanners/{0}/job/{1}".format(scanner,filename), "r")
                 #Add values to 
                 t = Template(f.read())
-                toDeployYaml = t.render(NAME="{0}-{1}".format(scanner,targetName),TARGET=target)
-
+                toDeployYaml = t.render(NAME="{0}-{1}".format(scanner,targetName),TARGET=target,ENV=env_data)
+                logging.debug(toDeployYaml)
                 #Make to json
                 toDeploy = yaml.load(toDeployYaml, Loader=Loader)
-                obj = batch1api.create_namespaced_job("samma-io", toDeploy) 
-
+                try:
+                    obj = batch1api.create_namespaced_job("samma-io", toDeploy) 
+                except ApiException as e:
+                    logging.info("Exception cannot create job %s\n" % e)
+    

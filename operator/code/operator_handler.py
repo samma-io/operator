@@ -112,10 +112,10 @@ def create_fn(body, spec, **kwargs):
         #What kind of jov do we want. Lets check if there is a scedule tag. 
         # If there is a schudel tag then deploy a cronjob ! 
         if scheduler != "none":
-            deployCron(scanner,target,scheduler)
+            deployCron(scanner,target,scheduler,env_data)
         else:
             #Nope no sceduler lets deploy this a job
-            deployJob(scanner,target)
+            deployJob(scanner,target,env_data)
 
 
 
@@ -127,9 +127,14 @@ def delete(body, **kwargs):
     name = body['metadata']['name']
     target = body['spec']['target']
     scanners  = body['spec']['scanners']
+    scheduler = "none"
+    try: 
+        scheduler = body['spec']['scheduler']
+    except:
+        pass    
     for scanner in scanners:
         try:
-            if body['spec']['scheduler']:
+            if scheduler != "none":
                 deleteCron(scanner,target)
             else:
                 #Nope no sceduler lets delete a job
