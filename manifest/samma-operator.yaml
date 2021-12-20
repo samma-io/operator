@@ -89,4 +89,19 @@ subjects:
 #      containers:
 #        - image: sammascanner/operator
 #          name: samma-operator
-#          imagePullPolicy: Always
+#          imagePullPolicy: Alway
+
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: samma-io
+spec:
+  ports:
+  - port: 80
+    name: api
+    targetPort: 80
+  selector:
+    app: samma-api
+  type: NodePort

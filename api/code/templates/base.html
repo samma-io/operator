@@ -1,0 +1,51 @@
+<!doctype html>
+<title>Samma.io Scanners </title>
+<link rel="stylesheet" href="style.css">
+<nav>
+  <h1>Samma.io Scanners</h1>
+</nav>
+<section class="new">
+  <form action="/action_page.php">
+    <label for="name">Name:*</label><br>
+    <input type="text" id="fname" name="fname" value="samma.se"><br>
+    <label for="target">Target:*</label><br>
+    <input type="text" id="lname" name="lname" value="test.samma.io"><br><br>
+    <label for="target">Samma_io_id:</label><br>
+    <input type="text" id="samma_io_id" name="samma_io_id" value="">(example: 1234edf)<br><br>
+    <label for="target">Samma_io_tags:</label><br>
+    <input type="text" id="samma_io_tags" name="samma_io_tags" value="">(example: ['scan','test'])<br><br>
+    <label for="target">Samma_io_json:</label><br>
+    <input type="text" id="samma_io_json" name="samma_io_json" value="">(example: {"scanner":"value"})<br><br>    
+    <label for="target">Samma_io_scanners:</label><br>
+    <input type="text" id="samma_io_scanners" name="samma_io_json" value="">(example: ['scan','test'])<br><br> 
+    <label for="target">Scheduler:</label><br>
+    <input type="text" id="scheduler" name="scheduler" value="">(example: 2 19 * * *) (If enterd will turn to cronjob)<br><br>   
+    <input type="submit" value="Save">
+  </form>
+  
+
+
+
+
+<hr>
+    <h3>Scanners installed </h3>
+ 
+ 
+</section>
+<section class="Scanners">
+<table>
+
+
+
+  {% for scanner in SCANNERS %}
+  <tr><td><b>name </b>: {{ scanner['metadata']['name'] }}</td>
+      {% for spec in scanner['spec'] %}
+      <td><b>{{spec}} </b>: {{ scanner['spec'][spec] }} </td>
+      {% endfor %}
+  
+  </tr>
+
+  {% endfor %}
+</table>
+
+</section>

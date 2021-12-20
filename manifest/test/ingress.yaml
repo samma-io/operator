@@ -1,0 +1,28 @@
+kind: Ingress
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: "samma-test"
+  namespace: samma-io
+  annotations:
+    samma-io.alpha.kubernetes.io/enable: "true"
+    samma-io.alpha.kubernetes.io/scanners: "nmap,nikto"
+    samma-io.alpha.kubernetes.io/profile: "default"
+    samma-io.alpha.kubernetes.io/scheduler: "2 19 * * *"
+    samma-io.alpha.kubernetes.io/samma_io_id: "12345"
+    samma-io.alpha.kubernetes.io/samma_io_tags: "scanner,prod"
+    samma-io.alpha.kubernetes.io/write_to_file: "true"
+    samma-io.alpha.kubernetes.io/elasticsearch: elasticsearch
+
+
+spec:
+  rules:
+    - host: api.samma.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port: 
+                  number: 80

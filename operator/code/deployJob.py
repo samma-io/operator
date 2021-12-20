@@ -35,27 +35,29 @@ def deployJob(scanner,target="samma.io",env_data={}):
     '''
     targetName = target.replace('.',"-")
 
-    for filename in os.listdir("/code/scanners/{0}/job/".format(scanner)):
-        print(filename)
-        haveDeployd=False
-        pods = batch1api.list_namespaced_job("samma-io")
-        for pod in pods.items:
-            logging.info("Looping over pods")
-            if pod.metadata.name == "{0}-{1}".format(scanner,targetName):
-                haveDeployd= True
-    
-        if not haveDeployd:
-                logging.info("Deploying Scanner")
-                #Open the yaml file         
-                f = open("/code/scanners/{0}/job/{1}".format(scanner,filename), "r")
-                #Add values to 
-                t = Template(f.read())
-                toDeployYaml = t.render(NAME="{0}-{1}".format(scanner,targetName),TARGET=target,ENV=env_data)
-                logging.debug(toDeployYaml)
-                #Make to json
-                toDeploy = yaml.load(toDeployYaml, Loader=Loader)
-                try:
-                    obj = batch1api.create_namespaced_job("samma-io", toDeploy) 
-                except ApiException as e:
-                    logging.info("Exception cannot create job %s\n" % e)
-    
+    if os.path.isdir("/code/scanners/{0}/job/".format(scanner)):
+        for filename in os.listdir("/code/scanners/{0}/job/".format(scanner)):
+            print(filename)
+            haveDeployd=False
+            pods = batch1api.list_namespaced_job("samma-io")
+            for pod in pods.items:
+                logging.info("Looping over pods")
+                if pod.metadata.name == "{0}-{1}".format(scanner,targetName):
+                    haveDeployd= True
+
+            if not haveDeployd:
+                    logging.info("Deploying Scanner")
+                    #Open the yaml file         
+                    f = open("/code/scanners/{0}/job/{1}".format(scanner,filename), "r")
+                    #Add values to 
+                    t = Template(f.read())
+                    toDeployYaml = t.render(NAME="{0}-{1}".format(scanner,targetName),TARGET=target,ENV=env_data)
+                    logging.debug(toDeployYaml)
+                    #Make to json
+                    toDeploy = yaml.load(toDeployYaml, Loader=Loader)
+                    try:
+                        obj = batch1api.create_namespaced_job("samma-io", toDeploy) 
+                    except ApiException as e:
+                        logging.info("Exception cannot create job %s\n" % e)
+    else:
+        logging.info("The scanner {0} is not in our scanner repo ").format(scanner)

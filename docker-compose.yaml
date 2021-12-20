@@ -5,3 +5,5 @@ services:
     image: sammascanner/operator
     volumes:
       - ./:/code
+    ports:
+      - 8888:80

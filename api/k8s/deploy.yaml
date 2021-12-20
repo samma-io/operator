@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: samma-api
+  namespace: samma-io
+spec:
+  selector:
+    matchLabels:
+      app: samma-api
+  template:
+    metadata:
+      labels:
+        app: samma-api
+    spec:
+      serviceAccountName: samma-operator
+      containers:
+        - image: sammascanner/api
+          name: samma-api
+          imagePullPolicy: Never
+          #command: ['python','-u','/code/service_watch.py']        
+
+
+          
