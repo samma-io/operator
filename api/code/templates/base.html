@@ -1,26 +1,81 @@
 <!doctype html>
-<title>Samma.io Scanners </title>
-<link rel="stylesheet" href="style.css">
-<nav>
-  <h1>Samma.io Scanners</h1>
-</nav>
+<head>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-1BmE4kWBq78iYhFldvKuhfTAU6auU8tT94WrHftjDbrCEXSU1oBoqyl2QvZ6jIW3" crossorigin="anonymous">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+  @font-face {
+    font-style: normal;
+    font-family: "JetBrains Mono";
+    font-display: swap;
+    src: local("JetBrains Mono"), local("JetBrains-Mono"), url("../lib/JetBrainsMono/web/woff2/JetBrainsMono-Regular.woff2") format("woff2"), url("../lib/JetBrainsMono/web/woff/JetBrainsMono-Regular.woff") format("woff"), url("../lib/JetBrainsMono/web/eot/JetBrainsMono-Regular.eot") format("embedded-opentype"), url("../lib/JetBrainsMono/ttf/JetBrainsMono-Regular.ttf") format("truetype");
+  }
+
+
+    body {
+      font-size: x-small;
+      background-color: #1d1f21;
+      color: #c9cacc;
+
+    }
+
+
+    .container {    
+      background-color: #1d1f21;
+      font-size: 20px;
+        }
+    
+    p, .card-text{
+          font-size: x-small;
+        }
+
+    h3{
+      font-size: medium;
+    }
+    b {
+      font-size: x-small;
+    }
+    td{
+      font-size: x-small;
+    }
+    label, form{
+      font-size: x-small;
+    }
+    </style>
+
+
+
+
+</head>
+<title>Scanner - Samma.io</title>
+
+
+
+<div class="container">
+  <nav>
+    <h1>Samma.io</h1>
+  </nav>
+<br>
+<hr>
+<p id="info"></p>
+<h3>Create new</h3>
 <section class="new">
-  <form action="/action_page.php">
-    <label for="name">Name:*</label><br>
-    <input type="text" id="fname" name="fname" value="samma.se"><br>
+  <form id="form" action="/" method="get"> 
+    <p>Only * marked input are requerd</p>
+
     <label for="target">Target:*</label><br>
-    <input type="text" id="lname" name="lname" value="test.samma.io"><br><br>
+    <input type="text" id="target" name="lname" value="test.samma.io"><br><br>
     <label for="target">Samma_io_id:</label><br>
     <input type="text" id="samma_io_id" name="samma_io_id" value="">(example: 1234edf)<br><br>
     <label for="target">Samma_io_tags:</label><br>
-    <input type="text" id="samma_io_tags" name="samma_io_tags" value="">(example: ['scan','test'])<br><br>
+    <input type="text" id="samma_io_tags" name="samma_io_tags" value="">(example: scan,test)<br><br>
     <label for="target">Samma_io_json:</label><br>
     <input type="text" id="samma_io_json" name="samma_io_json" value="">(example: {"scanner":"value"})<br><br>    
     <label for="target">Samma_io_scanners:</label><br>
-    <input type="text" id="samma_io_scanners" name="samma_io_json" value="">(example: ['scan','test'])<br><br> 
+    <input type="text" id="samma_io_scanners" name="samma_io_json" value="">(example: nmap,nikto)<br><br> 
     <label for="target">Scheduler:</label><br>
-    <input type="text" id="scheduler" name="scheduler" value="">(example: 2 19 * * *) (If enterd will turn to cronjob)<br><br>   
-    <input type="submit" value="Save">
+    <input type="text" id="scheduler" name="scheduler" value="">(example: 2 19 * * *) (If enter will turn to cronjob leave blank for regular job)<br><br>   
+    <button type="submit">Subscribe</button>
+
   </form>
   
 
@@ -33,19 +88,119 @@
  
 </section>
 <section class="Scanners">
-<table>
-
-
-
+  <div class="row">
+    
   {% for scanner in SCANNERS %}
-  <tr><td><b>name </b>: {{ scanner['metadata']['name'] }}</td>
-      {% for spec in scanner['spec'] %}
-      <td><b>{{spec}} </b>: {{ scanner['spec'][spec] }} </td>
-      {% endfor %}
-  
-  </tr>
-
+  <div class="col-md-2">
+  <div class="card" style="width: 10rem; background-color: grey;">
+    
+    <div class="card-body">
+      <h5 class="card-title">{{ scanner['metadata']['name'] }}</h5>
+              <p class="card-text">{% for spec in scanner['spec'] %}
+                <b>{{spec}} </b>: {{ scanner['spec'][spec] }} <br>
+                    {% endfor %}</p>
+                  <button onclick="myFunction('{{ scanner['metadata']['name'] }}')" type="button" class="btn btn-danger">Delete</button>
+    </div>
+  </div>
+  </div>
   {% endfor %}
-</table>
+
+  </div>
 
 </section>
+<p>this is hacked togheter and you should expect it to break untill a more stabil release os done</p>
+</div>
+
+
+<script>
+const form  = document.getElementById('form');
+
+form.addEventListener('submit', (event) => {
+   const target = form.elements['target'].value
+   var samma_io_id = form.elements['samma_io_id'].value
+   var samma_io_tags = form.elements['samma_io_tags'].value
+   var samma_io_json = form.elements['samma_io_json'].value
+   var samma_io_scanners = form.elements['samma_io_scanners'].value
+   var scheduler = form.elements['scheduler'].value
+
+  // Fix empty values
+  if (samma_io_id==""){
+    samma_io_id="empty"
+  }
+  if (samma_io_tags==""){
+    samma_io_tags="['empty']"
+  }
+  if (samma_io_json==""){
+    samma_io_json="empty"
+  }
+  if (samma_io_scanners==""){
+    samma_io_scanners="['empty']"
+  }
+  if (scheduler==""){
+    scheduler="off"
+  }
+   var url = "/scanner";
+
+   var xhr = new XMLHttpRequest();
+   xhr.open("PUT", url);
+
+   xhr.setRequestHeader("Accept", "application/json");
+   xhr.setRequestHeader("Content-Type", "application/json");
+
+   xhr.onreadystatechange = function () {
+     if (xhr.readyState === 4) {
+         console.log(xhr.responseText);
+         document.getElementById("info").innerHTML = "response from server "+ xhr.responseText + "";
+
+     }};
+
+       var data = `{
+         "target": "${target}",
+         "samma_io_id": "${samma_io_id}",
+         "samma_io_tags": "${samma_io_tags}",
+         "samma_io_json": "${samma_io_json}",
+         "samma_io_scanners": "${samma_io_scanners}",
+         "write_to_file": "true",
+         "elasticsearch": "true"
+       }`;
+
+    // Send the data
+    apiresponse= xhr.send(data)
+    consol.log(data)
+});
+
+function myFunction(name) {
+  var url = "/scanner";
+
+var xhr = new XMLHttpRequest();
+xhr.open("DELETE", url);
+
+xhr.setRequestHeader("Accept", "application/json");
+xhr.setRequestHeader("Content-Type", "application/json");
+
+xhr.onreadystatechange = function () {
+  if (xhr.readyState === 4) {
+      console.log(xhr.responseText);
+      document.getElementById("info").innerHTML = "response from server "+ xhr.responseText + "";
+      location.reload()
+
+  }};
+
+    var data = `{
+      "name": "${name}"
+    }`;
+
+ // Send the data
+ apiresponse= xhr.send(data)
+ consol.log(data)
+
+
+}
+
+
+
+  </script>
+
+
+
+</html>

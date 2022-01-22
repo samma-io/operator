@@ -72,26 +72,80 @@ subjects:
     name: samma-operator 
     namespace: samma-io 
 ---
-#apiVersion: apps/v1
-#kind: Deployment
-#metadata:
-#  name: samma-operator
-#spec:
-#  selector:
-#    matchLabels:
-#      app: samma-operator
-#  template:
-#    metadata:
-#      labels:
-#        app: samma-operator
-#    spec:
-#      serviceAccountName: samma-operator
-#      containers:
-#        - image: sammascanner/operator
-#          name: samma-operator
-#          imagePullPolicy: Alway
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: samma-operator
+  namespace: samma-io
+spec:
+  selector:
+    matchLabels:
+      app: samma-operator
+  template:
+    metadata:
+      labels:
+        app: samma-operator
+    spec:
+      serviceAccountName: samma-operator
+      containers:
+        - image: sammascanner/operator:beta
+          env:
+            - name: nats
+              value: nats
+            - name: samma_io_id
+              value: "12345"
+            - name: samma_io_tags
+              value: "['scanner','prod']"
+            - name: samme_io_json
+              value: '{"attacke":"true"}'
+            - name: write_to_file
+              value: "true"
+            - name: elasticsearch
+              value: elasticsearch
+            - name: scanners
+              value: "['nmap']"
+          name: samma-operator
+          imagePullPolicy: Always
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: samma-api
+  namespace: samma-io
+spec:
+  selector:
+    matchLabels:
+      app: samma-api
+  template:
+    metadata:
+      labels:
+        app: samma-api
+    spec:
+      serviceAccountName: samma-operator
+      containers:
+        - image: sammascanner/api:beta
+          name: samma-api
+          imagePullPolicy: Always
+          ports:
+          - name: http
+            containerPort: 80
+            protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
 
-
+---
 apiVersion: v1
 kind: Service
 metadata:

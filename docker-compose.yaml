@@ -1,8 +1,15 @@
 version: '3'
 services:
-  api:
+  operator:
     build: operator/.
-    image: sammascanner/operator
+    image: sammascanner/operator:beta
+    volumes:
+      - ./:/code
+    ports:
+      - 8888:80
+  api:
+    build: api/.
+    image: sammascanner/api:beta
     volumes:
       - ./:/code
     ports:
