@@ -1,6 +1,6 @@
 # Samma Security Scanner Operator
 
-![Samma-io!](/assets/samma_logo.png)
+![Samma-io!](assets/samma_logo.png)
 
 
 
