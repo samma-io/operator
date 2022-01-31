@@ -81,11 +81,16 @@ def create_fn(body, spec, **kwargs):
     #Validate we have values
     name = body['metadata']['name']
     target = body['spec']['target']
-    scanners  = body['spec']['scanners'] or ['nmap']
     env_data = {}
 
     #Set to none we deploy job else we deploy crontab
     scheduler = "none"
+    try:
+        scanners  = body['spec']['scanners']
+    except:
+        scanners = ['nmap']
+
+
 
     try:
         env_data['samma_io_id'] = body['spec']['samma_io_id'] or "1234"
@@ -131,7 +136,11 @@ def create_fn(body, spec, **kwargs):
 def delete(body, **kwargs): 
     name = body['metadata']['name']
     target = body['spec']['target']
-    scanners  = body['spec']['scanners']
+    try:
+        scanners  = body['spec']['scanners']
+    except:
+        scanners = ['nmap']
+
     scheduler = "none"
     try: 
         scheduler = body['spec']['scheduler']
