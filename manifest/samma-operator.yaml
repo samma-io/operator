@@ -135,7 +135,7 @@ spec:
           imagePullPolicy: Always
           ports:
           - name: http
-            containerPort: 80
+            containerPort: 8080
             protocol: TCP
           resources:
             requests:
@@ -153,9 +153,9 @@ metadata:
   namespace: samma-io
 spec:
   ports:
-  - port: 80
+  - port: 8080
     name: api
-    targetPort: 80
+    targetPort: 8080
   selector:
     app: samma-api
-  type: NodePort
+  type: ClusterIP

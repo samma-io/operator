@@ -10,7 +10,7 @@ data:
       FILE=/out/die
       if test -f "$FILE"; then
           echo "$FILE exists. i kill myself"
-          sleep 5
+          sleep 30
           kill 1
       fi
       exit 0
