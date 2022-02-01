@@ -13,4 +13,4 @@ spec:
  #samme_io_json: '{"attacke":"true"}'
  write_to_file: "true"
  elasticsearch: elasticsearch
- scanners: ['nmap']
+ scanners: ['nikto']

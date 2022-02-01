@@ -92,18 +92,18 @@ spec:
           env:
             - name: nats
               value: nats
-            - name: samma_io_id
+            - name: SAMMA_IO_ID
               value: "12345"
-            - name: samma_io_tags
+            - name: SAMMA_IO_TAGS
               value: "['scanner','prod']"
-            - name: samme_io_json
+            - name: SAMMA_IO_JSON
               value: '{"attacke":"true"}'
-            - name: write_to_file
+            - name: WRITE_TO_FILE
               value: "true"
-            - name: elasticsearch
+            - name: ELASTICSEARCH
               value: elasticsearch
-            - name: scanners
-              value: "['nmap']"
+            - name: SAMMA_IO_SCANNER
+              value: "['nmap','nikto']"
           name: samma-operator
           imagePullPolicy: Always
           resources:

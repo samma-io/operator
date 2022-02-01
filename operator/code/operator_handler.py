@@ -5,6 +5,7 @@ from kubernetes import client, config, watch
 import yaml
 import json 
 from pprint import pprint
+import os
 
 
 #Our code
@@ -12,7 +13,13 @@ from deployJob import deleteJob, deployJob
 from deploycron import deleteCron, deployCron
 
 # Import lissen for changes
-
+## Setup ENV 
+samma_io_id = os.getenv('SAMMA_IO_ID' , '1234')
+samma_io_tags = os.getenv('SAMMA_IO_TAGS' , ["samma"])
+samma_io_json = os.getenv('SAMMA_IO_JSON' , '{"samma":"scanner"}') 
+samma_io_scanners = os.getenv('SAMMA_IO_SCANNER' , ["nmap"])
+write_to_file = os.getenv('WRITE_TO_FILE' , 'true')
+elasticsearch = os.getenv('ELASTICSEARCH' , 'true')
 
 
 
@@ -88,24 +95,24 @@ def create_fn(body, spec, **kwargs):
     try:
         scanners  = body['spec']['scanners']
     except:
-        scanners = ['nmap']
+        scanners = samma_io_scanners
 
 
 
     try:
-        env_data['samma_io_id'] = body['spec']['samma_io_id'] or "1234"
+        env_data['samma_io_id'] = body['spec']['samma_io_id'] or samma_io_id
     except:
         pass
     try:
-        env_data['samma_io_tags']=  body['spec']['samma_io_tags'] or ["scanner","nmap","samma"]
+        env_data['samma_io_tags']=  body['spec']['samma_io_tags'] or samma_io_tags
     except:
         pass
     try:
-        env_data['samme_io_json']= body['spec']['samma_io_json'] or {"attacke":"true"}
+        env_data['samme_io_json']= body['spec']['samma_io_json'] or samma_io_json
     except:
         pass
     try:
-        env_data['write_to_file']= body['spec']['write_to_file'] or  "true"
+        env_data['write_to_file']= body['spec']['write_to_file'] or  write_to_file
     except:
         pass
     try:
@@ -139,7 +146,7 @@ def delete(body, **kwargs):
     try:
         scanners  = body['spec']['scanners']
     except:
-        scanners = ['nmap']
+        scanners = samma_io_scanners
 
     scheduler = "none"
     try: 
@@ -194,7 +201,7 @@ def create_fn(body, spec, **kwargs):
                     scannerData["spec"][annontaion[1]] = body['metadata']['annotations'][annotaions]
     #Create and deploy new scanner
     if deployScanner:
-        scanners = body['metadata']['annotations']['samma-io.alpha.kubernetes.io/scanners'].split(',')
+        scanners = body['metadata']['annotations']['samma-io.alpha.kubernetes.io/scanners'].split(',') or samma_io_scanners
         targets = body['spec']['rules']
         for scanner in scanners:
             for target in targets:

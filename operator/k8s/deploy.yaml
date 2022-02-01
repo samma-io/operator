@@ -17,4 +17,19 @@ spec:
         - image: sammascanner/operator
           name: samma-service
           imagePullPolicy: Never
+          env:
+            - name: nats
+              value: nats
+            - name: SAMMA_IO_ID
+              value: "12345"
+            - name: SAMMA_IO_TAGS
+              value: "['scanner','prod']"
+            - name: SAMMA_IO_JSON
+              value: '{"attacke":"true"}'
+            - name: WRITE_TO_FILE
+              value: "true"
+            - name: ELASTICSEARCH
+              value: elasticsearch
+            - name: SAMMA_IO_SCANNER
+              value: "['nmap','nikto']"
           #command: ['python','-u','/code/service_watch.py']        
