@@ -31,5 +31,5 @@ spec:
             - name: ELASTICSEARCH
               value: elasticsearch
             - name: SAMMA_IO_SCANNER
-              value: "['nmap','nikto']"
+              value: "nmap,nikto"
           #command: ['python','-u','/code/service_watch.py']        

@@ -17,7 +17,7 @@ from deploycron import deleteCron, deployCron
 samma_io_id = os.getenv('SAMMA_IO_ID' , '1234')
 samma_io_tags = os.getenv('SAMMA_IO_TAGS' , ["samma"])
 samma_io_json = os.getenv('SAMMA_IO_JSON' , '{"samma":"scanner"}') 
-samma_io_scanners = os.getenv('SAMMA_IO_SCANNER' , ["nmap"])
+samma_io_scanners = os.getenv('SAMMA_IO_SCANNER' , "nmap")
 write_to_file = os.getenv('WRITE_TO_FILE' , 'true')
 elasticsearch = os.getenv('ELASTICSEARCH' , 'true')
 
@@ -95,9 +95,9 @@ def create_fn(body, spec, **kwargs):
     try:
         scanners  = body['spec']['scanners']
     except:
-        scanners = samma_io_scanners
-
-
+        scanners = samma_io_scanners.split(',')
+        print("#################")
+        print(scanners)
 
     try:
         env_data['samma_io_id'] = body['spec']['samma_io_id'] or samma_io_id
@@ -146,7 +146,7 @@ def delete(body, **kwargs):
     try:
         scanners  = body['spec']['scanners']
     except:
-        scanners = samma_io_scanners
+        scanners = samma_io_scanners.split(',')
 
     scheduler = "none"
     try: 
@@ -201,7 +201,7 @@ def create_fn(body, spec, **kwargs):
                     scannerData["spec"][annontaion[1]] = body['metadata']['annotations'][annotaions]
     #Create and deploy new scanner
     if deployScanner:
-        scanners = body['metadata']['annotations']['samma-io.alpha.kubernetes.io/scanners'].split(',') or samma_io_scanners
+        scanners = body['metadata']['annotations']['samma-io.alpha.kubernetes.io/scanners'].split(',') or samma_io_scanners.split(',')
         targets = body['spec']['rules']
         for scanner in scanners:
             for target in targets:

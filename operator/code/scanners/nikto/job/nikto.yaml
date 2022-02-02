@@ -47,10 +47,10 @@ spec:
       volumes:
       - name: filebeat
         configMap:
-          name: filebeat-ts
+          name: filebeat
       - name: liveness
         configMap:
-          name: live-ts
+          name: live
           defaultMode: 0777
       - name: out-volume
         emptyDir: {}
