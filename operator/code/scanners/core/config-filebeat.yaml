@@ -33,9 +33,9 @@ data:
 
 
       #Adding the Samma-io Index and rollover 
-      setup.ilm.enabled: auto
-      setup.ilm.rollover_alias: "samma-io"
-      setup.ilm.pattern: "{now/d}-000001"
+      setup.ilm.enabled: off
+      #setup.ilm.rollover_alias: "samma-io"
+      s#etup.ilm.pattern: "{now/d}-000001"
       setup.template.name: "samma-io"
       setup.template.pattern: "samma-io*"
       logging.level: debug
