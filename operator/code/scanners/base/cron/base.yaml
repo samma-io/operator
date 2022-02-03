@@ -1,7 +1,7 @@
 apiVersion: batch/v1beta1
 kind: CronJob
 metadata:
-  name: {{ NAME }}
+  name: {{ NAME }}-base
 spec:
   schedule: "{{ SCHEDULER }}"
   jobTemplate:
@@ -9,27 +9,26 @@ spec:
       template:
         spec:
           containers:
-          - name: nikto
-            image: sammascanner/nikto:v0.2
-            command: ["python3","/code/scan.py","&","echo","'died_man_die'",">","/out/die"]
+          - name: base
+            image: sammascanner/base
             env:
               - name: TARGET
-                value: {{ TARGET }}
+                value: "{{ TARGET }}"
               - name: SAMMA_IO_SCANNER
-                value: nikto
+                value: "base"
             {% for user in ENV %}
               - name: {{ user }}
                 value: "{{ ENV[user]}}"
             {% endfor %}
               - name: PARSER
-                value: nikto
+                value: "base"
             volumeMounts:
               - mountPath: /out
                 name: out-volume
           - name: filebeat
             image: docker.elastic.co/beats/filebeat:7.15.0
             env:
-              - name: ELASTICSEARC
+              - name: ELASTICSEARCH
                 value: http://elasticsearch:9200
             livenessProbe:
               exec:

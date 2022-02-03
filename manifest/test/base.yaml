@@ -1,13 +1,12 @@
 apiVersion: samma.io/v1  
 kind: Scanner
 metadata: 
-  name: test
+  name: base
   namespace: samma-io
 spec: 
- target: uggla.io
+ target: booli.se
  samma_io_id: "11111"
- scanners: ['tsunami']
+ scanners: ['base']
  samma_io_tags: 
       - proxy
       - demo
-

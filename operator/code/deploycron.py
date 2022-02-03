@@ -56,7 +56,14 @@ def deployCron(scanner,target="samma.io",sceduler="15 0 * * * ",env_data={}):
                     f = open("/code/scanners/{0}/cron/{1}".format(scanner,filename), "r")
                     #Add values to 
                     t = Template(f.read())
-                    toDeployYaml = t.render(NAME="{0}-{1}".format(scanner,targetName),TARGET=target,SCHEDULER=sceduler,ENV=env_data)
+                    try:
+                        SCANNERFirst=int(target[0])
+                        logging.info("########################")
+                        logging.info(SCANNERFirst)
+                    except ValueError:
+                        logging.info("########################")
+                        logging.info(SCANNERFirst)
+                    toDeployYaml = t.render(NAME="{0}-{1}".format(scanner,targetName),TARGET=target,SCHEDULER=sceduler,ENV=env_data,SCANNERFirst=SCANNERFirst)
                     logging.debug(toDeployYaml)
                     #Make to json
                     toDeploy = yaml.load(toDeployYaml, Loader=Loader)

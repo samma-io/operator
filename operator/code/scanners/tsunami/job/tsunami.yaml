@@ -1,28 +1,27 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: tsunami
+  name: {{ NAME }}-tsunami
 spec:
   template:
     spec:
       containers:
       - name: tsunami
         image: sammascanner/tsunami:v0.1
-        args: ["--ip-v4-target=158.174.104.17","--scan-results-local-output-format=JSON","--scan-results-local-output-filename=/out/tsunami-output.json"]
-        #command: ["--ip-v4-target=158.174.104.17","--scan-results-local-output-format=JSON","--scan-results-local-output-filename=/out/tsunami-output.json"]
+        {% if SCANNERFirst is number %}
+        args: ["--ip-v4-target={{ TARGET }}","--scan-results-local-output-format=JSON","--scan-results-local-output-filename=/out/tsunami-output.json"]
+        {% else %}
+        args: ["--hostname-target={{ TARGET }}","--scan-results-local-output-format=JSON","--scan-results-local-output-filename=/out/tsunami-output.json"]
+        {% endif %}       
         env:
           - name: TARGET
-            value: samma.io
+            value: {{ TARGET }}
           - name: SAMMA_IO_SCANNER
             value: tsunami
-          - name: SAMMA_IO_ID
-            value: "00000"
-          - name: SAMMA_IO_TAGS
-            value: "['scanner','tsunami']"
-          - name: SAMMA_IO_JSON
-            value: '{"extra":"value"}'
-          - name: WRITE_TO_FILE
-            value: "true"
+        {% for user in ENV %}
+          - name: {{ user }}
+            value: "{{ ENV[user]}}"
+        {% endfor %}
           - name: PARSER
             value: tsunami
         volumeMounts:
@@ -37,14 +36,10 @@ spec:
             value: samma.io
           - name: SAMMA_IO_SCANNER
             value: tsunami
-          - name: SAMMA_IO_ID
-            value: "00000"
-          - name: SAMMA_IO_TAGS
-            value: "['scanner','tsunami']"
-          - name: SAMMA_IO_JSON
-            value: '{"extra":"value"}'
-          - name: WRITE_TO_FILE
-            value: "true"
+        {% for user in ENV %}
+          - name: {{ user }}
+            value: "{{ ENV[user]}}"
+        {% endfor %}
           - name: PARSER
             value: tsunami
         volumeMounts:
@@ -75,10 +70,10 @@ spec:
       volumes:
       - name: filebeat
         configMap:
-          name: filebeat-ts
+          name: filebeat
       - name: liveness
         configMap:
-          name: live-ts
+          name: live
           defaultMode: 0777
       - name: out-volume
         emptyDir: {}

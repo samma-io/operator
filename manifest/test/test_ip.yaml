@@ -1,13 +1,12 @@
 apiVersion: samma.io/v1  
 kind: Scanner
 metadata: 
-  name: test
+  name: test-ip
   namespace: samma-io
 spec: 
- target: uggla.io
+ target: 10.100.0.5
  samma_io_id: "11111"
  scanners: ['tsunami']
  samma_io_tags: 
       - proxy
       - demo
-

@@ -1,0 +1,57 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ NAME }}-base
+spec:
+  template:
+    spec:
+      containers:
+      - name: base
+        image: sammascanner/base
+        env:
+          - name: TARGET
+            value: "{{ TARGET }}"
+          - name: SAMMA_IO_SCANNER
+            value: "base"
+        {% for user in ENV %}
+          - name: {{ user }}
+            value: "{{ ENV[user]}}"
+        {% endfor %}
+          - name: PARSER
+            value: "base"
+        volumeMounts:
+          - mountPath: /out
+            name: out-volume
+      - name: filebeat
+        image: docker.elastic.co/beats/filebeat:7.15.0
+        env:
+          - name: ELASTICSEARCH
+            value: "http://elasticsearch:9200"
+        livenessProbe:
+          exec:
+            command:
+              - /bin/sh
+              - '-c'
+              - /live.sh
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        volumeMounts:
+        - name: filebeat
+          mountPath: "/usr/share/filebeat/filebeat.yml"
+          subPath: "filebeat.yml"
+        - name: liveness
+          mountPath: "/live.sh"
+          subPath: "live.sh"
+        - mountPath: /out
+          name: out-volume
+      volumes:
+      - name: filebeat
+        configMap:
+          name: filebeat
+      - name: liveness
+        configMap:
+          name: live
+          defaultMode: 0777
+      - name: out-volume
+        emptyDir: {}
+      restartPolicy: Never

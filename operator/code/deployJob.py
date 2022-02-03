@@ -1,6 +1,7 @@
 import os
 import logging
 from jinja2 import Template
+from jinja2 import Environment
 from kubernetes import client, config, watch
 from kubernetes.client.rest import ApiException
 import yaml
@@ -51,7 +52,16 @@ def deployJob(scanner,target="samma.io",env_data={}):
                     f = open("/code/scanners/{0}/job/{1}".format(scanner,filename), "r")
                     #Add values to 
                     t = Template(f.read())
-                    toDeployYaml = t.render(NAME="{0}-{1}".format(scanner,targetName),TARGET=target,ENV=env_data)
+                    SCANNERFirst="string"
+                    logging.info(target[0])
+                    try:
+                        SCANNERFirst=int(target[0])
+                        logging.info("########################")
+                        logging.info(SCANNERFirst)
+                    except ValueError:
+                        logging.info("########################")
+                        logging.info(SCANNERFirst)
+                    toDeployYaml = t.render(NAME="{0}-{1}".format(scanner,targetName),TARGET=target,ENV=env_data,SCANNERFirst=SCANNERFirst)
                     logging.debug(toDeployYaml)
                     #Make to json
                     toDeploy = yaml.load(toDeployYaml, Loader=Loader)

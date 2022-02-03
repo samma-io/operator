@@ -11,21 +11,20 @@ spec:
           containers:
           - name: tsunami
             image: sammascanner/tsunami:v0.1
+            {% if SCANNERFirst is number %}
             args: ["--ip-v4-target={{ TARGET }}","--scan-results-local-output-format=JSON","--scan-results-local-output-filename=/out/tsunami-output.json"]
-            #command: ["--ip-v4-target=158.174.104.17","--scan-results-local-output-format=JSON","--scan-results-local-output-filename=/out/tsunami-output.json"]
+            {% else %}
+            args: ["--hostname-target={{ TARGET }}","--scan-results-local-output-format=JSON","--scan-results-local-output-filename=/out/tsunami-output.json"]
+            {% endif %}
             env:
               - name: TARGET
                 value: {{ TARGET }}
               - name: SAMMA_IO_SCANNER
                 value: tsunami
-              - name: SAMMA_IO_ID
-                value: "00000"
-              - name: SAMMA_IO_TAGS
-                value: "['scanner','tsunami']"
-              - name: SAMMA_IO_JSON
-                value: '{"extra":"value"}'
-              - name: WRITE_TO_FILE
-                value: "true"
+            {% for user in ENV %}
+              - name: {{ user }}
+                value: "{{ ENV[user]}}"
+            {% endfor %}
               - name: PARSER
                 value: tsunami
             volumeMounts:
@@ -40,14 +39,10 @@ spec:
                 value: {{ TARGET }}
               - name: SAMMA_IO_SCANNER
                 value: tsunami
-              - name: SAMMA_IO_ID
-                value: "00000"
-              - name: SAMMA_IO_TAGS
-                value: "['scanner','tsunami']"
-              - name: SAMMA_IO_JSON
-                value: '{"extra":"value"}'
-              - name: WRITE_TO_FILE
-                value: "true"
+            {% for user in ENV %}
+              - name: {{ user }}
+                value: "{{ ENV[user]}}"
+            {% endfor %}
               - name: PARSER
                 value: tsunami
             volumeMounts:
