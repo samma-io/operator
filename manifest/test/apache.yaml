@@ -1,13 +1,12 @@
 apiVersion: samma.io/v1  
 kind: Scanner
 metadata: 
-  name: demo-apache-2-4-17
+  name: test
   namespace: samma-io
 spec: 
- target: apache-2-4-17.apache.svc
- scheduler: "2 19 * * *"
+ target: samma.samma-io.svc
  samma_io_id: "11111"
  samma_io_tags: 
-      - apache
+      - proxy
       - demo
 
