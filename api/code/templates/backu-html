@@ -1,0 +1,6 @@
+<label for="target">Samma_io_id:</label><br>
+    <input type="text" id="samma_io_id" name="samma_io_id" value="">(example: 1234edf)<br><br>
+    <label for="target">Samma_io_tags:</label><br>
+    <input type="text" id="samma_io_tags" name="samma_io_tags" value="">(example: scan,test)<br><br>
+    <label for="target">Samma_io_json:</label><br>
+    <input type="text" id="samma_io_json" name="samma_io_json" value="">(example: {"scanner":"value"})<br><br> 
