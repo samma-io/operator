@@ -33,7 +33,7 @@ spec:
           - name: FILE
             value: tsunami-output.json
           - name: TARGET
-            value: samma.io
+            value: {{ TARGET }}
           - name: SAMMA_IO_SCANNER
             value: tsunami
         {% for user in ENV %}
@@ -46,10 +46,10 @@ spec:
           - mountPath: /out
             name: out-volume
       - name: filebeat
-        image: docker.elastic.co/beats/filebeat:7.15.0
+        image: docker.elastic.co/beats/filebeat:7.16.0
         env:
-          - name: ELASTICSEARC
-            value: http://elasticsearch:9200
+          - name: ELASTICSEARCH
+            value: elasticsearch:9200
         livenessProbe:
           exec:
             command:
@@ -57,7 +57,7 @@ spec:
               - '-c'
               - /live.sh
           initialDelaySeconds: 10
-          periodSeconds: 5
+          periodSeconds: 30
         volumeMounts:
         - name: filebeat
           mountPath: "/usr/share/filebeat/filebeat.yml"

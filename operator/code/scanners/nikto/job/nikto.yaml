@@ -13,6 +13,8 @@ spec:
         env:
           - name: TARGET
             value: {{ TARGET }}
+          - name: SAMMA_IO_SCANNER
+            value: nikto
         {% for user in ENV %}
           - name: {{ user }}
             value: "{{ ENV[user]}}"

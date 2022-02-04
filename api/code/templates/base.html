@@ -74,7 +74,7 @@
     <input type="text" id="samma_io_scanners" name="samma_io_json" value="">(example: nmap,nikto)<br><br> 
     <label for="target">Scheduler:</label><br>
     <input type="text" id="scheduler" name="scheduler" value="">(example: 2 19 * * *) (If enter will turn to cronjob leave blank for regular job)<br><br>   
-    <button type="submit">Subscribe</button>
+    <button type="submit">Add</button>
 
   </form>
   
@@ -128,13 +128,13 @@ form.addEventListener('submit', (event) => {
     samma_io_id="empty"
   }
   if (samma_io_tags==""){
-    samma_io_tags="['empty']"
+    samma_io_tags="empty,samma"
   }
   if (samma_io_json==""){
     samma_io_json="empty"
   }
   if (samma_io_scanners==""){
-    samma_io_scanners="['empty']"
+    samma_io_scanners="empty,scanners"
   }
   if (scheduler==""){
     scheduler="off"

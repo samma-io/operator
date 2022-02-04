@@ -27,8 +27,8 @@ metrics = PrometheusMetrics(app)
 ## Setup ENV 
 samma_io_id = os.getenv('SAMMA_IO_ID' , '1234')
 samma_io_tags = os.getenv('SAMMA_IO_TAGS' , ["samma"])
-samma_io_json = os.getenv('SAMMA_IO_JSON' , '{"samma":"scanner"}') 
-samma_io_scanners = os.getenv('SAMMA_IO_SCANNER' , ["nmap"])
+samma_io_json = os.getenv('SAMMA_IO_JSON' , "{'samma':'scanner'}") 
+samma_io_scanners = os.getenv('SAMMA_IO_SCANNER' , ["nmap","nikto","tsunami"])
 write_to_file = os.getenv('WRITE_TO_FILE' , 'true')
 elasticsearch = os.getenv('ELASTICSEARCH' , 'true')
 
@@ -82,23 +82,28 @@ def create_scanners():
             try:
                 gottags = content['samma_io_tags'].split(',')
                 if "empty" in gottags:
-                    print("use defualts tags")
+                    samma_io_tags = os.getenv('SAMMA_IO_TAGS' , ["samma"])
                 else:
                    samma_io_tags = gottags
             except:
                 print("usingd efulats")
 
             try:
-                if content['samma_io_id'] != "" or content['samma_io_id'] != "empty":
-                    samma_io_id = content['samma_io_id']
-            except:
+                if content['samma_io_id'] == "empty":
                     print("using defualt samma_io_id")
+                    samma_io_id = os.getenv('SAMMA_IO_ID' , '1234')
+
+                    
+            except:
+                    samma_io_id = content['samma_io_id']
 
             try:
-                if content['samma_io_json'] != "" or content['samma_io_json'] != "empty":
-                    samma_io_json = content['samma_io_json']
+                if content['samma_io_json'] == "empty":
+                    print("using defualt samma_io_json")
+                    samma_io_json = os.getenv('SAMMA_IO_JSON' , "{'samma':'scanner'}") 
+
             except:
-                print("using defualt samma_io_json")
+                samma_io_json = content['samma_io_json']
 
             try:
                 if content['write_to_file'] != "" or content['write_to_file'] != "empty":
