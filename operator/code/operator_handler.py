@@ -11,6 +11,7 @@ import os
 #Our code
 from deployJob import deleteJob, deployJob
 from deploycron import deleteCron, deployCron
+from profile_resolver import resolve_profiles, parse_scanner_spec
 
 # Import lissen for changes
 ## Setup ENV 
@@ -74,7 +75,22 @@ def initOperator():
             logging.info("Exception when calling WellKnownApi->get_service_account_issuer_open_id_configuration: %s\n" % e)
 
 
-    #Lets install the filebeat config for us
+    #Deploy default scanner-profiles ConfigMap
+    if isConfigMapDeploy('scanner-profiles') == False:
+        profiles_cm = client.V1ConfigMap(
+            metadata=client.V1ObjectMeta(name="scanner-profiles", namespace="samma-io"),
+            data={
+                "default": "nmap,nikto",
+                "web": "nikto,nmap/http",
+                "network": "nmap/port,nmap/tls",
+                "full": "nmap,nikto,tsunami,base",
+            }
+        )
+        try:
+            api_response = api.create_namespaced_config_map(namespace="samma-io", body=profiles_cm)
+            logging.info("Created scanner-profiles ConfigMap")
+        except ApiException as e:
+            logging.info("Exception when creating scanner-profiles ConfigMap: %s\n" % e)
 
 ##
 #Init the initOperator
@@ -119,20 +135,22 @@ def create_fn(body, spec, **kwargs):
         env_data['elasticsearch']= body['spec']['elasticsearch'] or "elasticsearch"
     except:
         pass
-    try: 
+    try:
         scheduler = body['spec']['scheduler']
     except:
         pass
 
+    templates = body['spec'].get('templates', None)
+
     #Deploy the scanners
     for scanner in scanners:
-        #What kind of jov do we want. Lets check if there is a scedule tag. 
-        # If there is a schudel tag then deploy a cronjob ! 
+        #What kind of jov do we want. Lets check if there is a scedule tag.
+        # If there is a schudel tag then deploy a cronjob !
         if scheduler != "none":
-            deployCron(scanner,target,scheduler,env_data)
+            deployCron(scanner,target,scheduler,env_data,templates=templates)
         else:
             #Nope no sceduler lets deploy this a job
-            deployJob(scanner,target,env_data)
+            deployJob(scanner,target,env_data,templates=templates)
 
 
 
@@ -149,17 +167,18 @@ def delete(body, **kwargs):
         scanners = samma_io_scanners.split(',')
 
     scheduler = "none"
-    try: 
+    try:
         scheduler = body['spec']['scheduler']
     except:
-        pass    
+        pass
+    templates = body['spec'].get('templates', None)
     for scanner in scanners:
         try:
             if scheduler != "none":
-                deleteCron(scanner,target)
+                deleteCron(scanner,target,templates=templates)
             else:
                 #Nope no sceduler lets delete a job
-                deleteJob(scanner,target)
+                deleteJob(scanner,target,templates=templates)
         except:
             logging.info("Got some error when deleteing")
 
@@ -173,55 +192,85 @@ def delete(body, **kwargs):
 ###
 
 
-@kopf.on.create('networking.k8s.io', 'v1', 'Ingress') 
-def create_fn(body, spec, **kwargs): 
-   
+@kopf.on.create('networking.k8s.io', 'v1', 'Ingress')
+def ingress_create_fn(body, spec, **kwargs):
+
     deployScanner = False
     scannerData={
         "apiVersion": "samma.io/v1",
         "kind": "Scanner",
-            "metadata": {
-                 "name": "empty",
-                 "namespace": "samma-io"
-                },
-            "spec": {}
-
+        "metadata": {
+            "name": "empty",
+            "namespace": "samma-io"
+        },
+        "spec": {}
     }
-    #Extract the samma scanenr data
-    for annotaions in body['metadata']['annotations']:
-        if annotaions == 'samma-io.alpha.kubernetes.io/enable':
+    annotations = body['metadata'].get('annotations', {})
+
+    #Extract the samma scanner data
+    for ann_key in annotations:
+        if ann_key == 'samma-io.alpha.kubernetes.io/enable':
             deployScanner = True
         else:
-            annontaion = annotaions.split('/')
-            if annontaion[0] == 'samma-io.alpha.kubernetes.io':
-                #Sometimes we want the data as arrays to change , values to arrays
-                if annontaion[1] == "samma_io_tags" or annontaion[1] == "scanners":
-                    scannerData["spec"][annontaion[1]] = body['metadata']['annotations'][annotaions].split(",")
+            ann_parts = ann_key.split('/')
+            if ann_parts[0] == 'samma-io.alpha.kubernetes.io':
+                field = ann_parts[1]
+                # Skip profile and scanners - handled separately below
+                if field in ('profile', 'scanners'):
+                    continue
+                if field == "samma_io_tags":
+                    scannerData["spec"][field] = annotations[ann_key].split(",")
                 else:
-                    scannerData["spec"][annontaion[1]] = body['metadata']['annotations'][annotaions]
+                    scannerData["spec"][field] = annotations[ann_key]
+
     #Create and deploy new scanner
     if deployScanner:
-        scanners = body['metadata']['annotations']['samma-io.alpha.kubernetes.io/scanners'].split(',') or samma_io_scanners.split(',')
+        # Resolve scanner specs from profile, scanners annotation, or default profile
+        profile_ann = annotations.get('samma-io.alpha.kubernetes.io/profile')
+        scanners_ann = annotations.get('samma-io.alpha.kubernetes.io/scanners')
+
+        if profile_ann:
+            profile_names = [p.strip() for p in profile_ann.split(',')]
+            scanner_specs = resolve_profiles(profile_names, api)
+        elif scanners_ann:
+            scanner_specs = [(s.strip(), None) for s in scanners_ann.split(',')]
+        else:
+            scanner_specs = resolve_profiles(['default'], api)
+
+        if not scanner_specs:
+            logging.warning("No scanner specs resolved for Ingress, falling back to env default")
+            scanner_specs = [(s.strip(), None) for s in samma_io_scanners.split(',')]
+
         targets = body['spec']['rules']
-        for scanner in scanners:
+        for scanner, template in scanner_specs:
             for target in targets:
-                scannerData['metadata']['name']="{0}-{1}".format(scanner,target['host'].replace('.','-'))
-                scannerData['spec']['target']= target['host']
-                group = 'samma.io' # str | The custom resource's group name
-                version = 'v1' # str | The custom resource's version
-                namespace = 'samma-io' # str | The custom resource's namespace
-                plural = 'scanner' # str | The custom resource's plural name. For TPRs this would be lowercase plural kind.
-                body = scannerData # object | The JSON schema of the Resource to create.
+                host = target['host']
+                host_sanitized = host.replace('.', '-')
+                if template:
+                    resource_name = "{0}-{1}-{2}".format(scanner, host_sanitized, template)
+                else:
+                    resource_name = "{0}-{1}".format(scanner, host_sanitized)
+
+                scanner_body = dict(scannerData)
+                scanner_body['metadata'] = dict(scannerData['metadata'])
+                scanner_body['spec'] = dict(scannerData['spec'])
+                scanner_body['metadata']['name'] = resource_name
+                scanner_body['spec']['target'] = host
+                scanner_body['spec']['scanners'] = [scanner]
+                if template:
+                    scanner_body['spec']['templates'] = [template]
+
+                group = 'samma.io'
+                version = 'v1'
+                namespace = 'samma-io'
+                plural = 'scanner'
                 try:
-                    api_response = k8sapi.create_namespaced_custom_object(group, version, namespace, plural, body)
-                    logging.info("Scanner with name  {0}-{1} has bean created ".format(scanner,target['host'].replace('.','-')) )
+                    api_response = k8sapi.create_namespaced_custom_object(group, version, namespace, plural, scanner_body)
+                    logging.info("Scanner with name %s has been created", resource_name)
                 except ApiException as e:
                     print("Exception when installing the scanner into the cluster: %s\n" % e)
-                
-                logging.debug(scannerData)
 
-
-
+                logging.debug(scanner_body)
 
 
 
@@ -231,27 +280,47 @@ def create_fn(body, spec, **kwargs):
     logging.info(scannerData)
 
 
-@kopf.on.delete('networking.k8s.io', 'v1', 'Ingress') 
-def delete(body, **kwargs): 
-    logging.info("Ingress")
-    #Extract the samma scanenr data
-    for annotaions in body['metadata']['annotations']:
-        if annotaions == 'samma-io.alpha.kubernetes.io/enable':
+@kopf.on.delete('networking.k8s.io', 'v1', 'Ingress')
+def ingress_delete(body, **kwargs):
+    logging.info("Ingress delete")
+    annotations = body['metadata'].get('annotations', {})
+    deployScanner = False
+    for ann_key in annotations:
+        if ann_key == 'samma-io.alpha.kubernetes.io/enable':
             deployScanner = True
-    #Create and deploy new scanner
+
     if deployScanner:
-        scanners = body['metadata']['annotations']['samma-io.alpha.kubernetes.io/scanners'].split(',')
+        # Resolve scanner specs using same logic as create
+        profile_ann = annotations.get('samma-io.alpha.kubernetes.io/profile')
+        scanners_ann = annotations.get('samma-io.alpha.kubernetes.io/scanners')
+
+        if profile_ann:
+            profile_names = [p.strip() for p in profile_ann.split(',')]
+            scanner_specs = resolve_profiles(profile_names, api)
+        elif scanners_ann:
+            scanner_specs = [(s.strip(), None) for s in scanners_ann.split(',')]
+        else:
+            scanner_specs = resolve_profiles(['default'], api)
+
+        if not scanner_specs:
+            scanner_specs = [(s.strip(), None) for s in samma_io_scanners.split(',')]
+
         targets = body['spec']['rules']
-        for scanner in scanners:
+        for scanner, template in scanner_specs:
             for target in targets:
-                group = 'samma.io' # str | The custom resource's group name
-                version = 'v1' # str | The custom resource's version
-                namespace = 'samma-io' # str | The custom resource's namespace
-                plural = 'scanner' # str | The custom resource's plural name. For TPRs this would be lowercase plural kind.
-                name = "{0}-{1}".format(scanner,target['host'].replace('.','-'))
+                host_sanitized = target['host'].replace('.', '-')
+                if template:
+                    name = "{0}-{1}-{2}".format(scanner, host_sanitized, template)
+                else:
+                    name = "{0}-{1}".format(scanner, host_sanitized)
+
+                group = 'samma.io'
+                version = 'v1'
+                namespace = 'samma-io'
+                plural = 'scanner'
                 try:
                     api_response = k8sapi.delete_namespaced_custom_object(group, version, namespace, plural, name)
-                    print("Scanner with name has bean delete {0}".format(name))
+                    print("Scanner with name has been deleted: {0}".format(name))
                 except ApiException as e:
-                    print("Exception when listing scanners in the cluster: %s\n" % e)
+                    print("Exception when deleting scanner from cluster: %s\n" % e)
 

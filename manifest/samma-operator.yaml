@@ -45,6 +45,12 @@ spec:
                   type: string
                 elasticsearch:
                   type: string
+                templates:
+                  type: array
+                  items:
+                    type: string
+                profile:
+                  type: string
 
   names: 
     kind: Scanner

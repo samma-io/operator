@@ -14,14 +14,16 @@ except ImportError:
 
 
 config.load_incluster_config()
-cronApi = client.BatchV1beta1Api()
+cronApi = client.BatchV1Api()
 
 
 
-def deleteCron(scanner,target="samma.io"):
+def deleteCron(scanner,target="samma.io",templates=None):
     targetName = target.replace('.',"-")
     for filename in os.listdir("/code/scanners/{0}/cron/".format(scanner)):
         job= filename.split(".")
+        if templates is not None and job[0] not in templates:
+            continue
         try:
             cronApi.delete_namespaced_cron_job(namespace="samma-io",name="{0}-{1}-{2}".format(scanner,targetName,job[0]))
             logging.info("Delete samma scanner job {0}".format(scanner))
@@ -29,7 +31,7 @@ def deleteCron(scanner,target="samma.io"):
             print("error deleting")
 
 
-def deployCron(scanner,target="samma.io",sceduler="15 0 * * * ",env_data={}):
+def deployCron(scanner,target="samma.io",sceduler="15 0 * * * ",env_data={},templates=None):
     '''
 
     To deploy a job we go to the service folder.
@@ -38,6 +40,9 @@ def deployCron(scanner,target="samma.io",sceduler="15 0 * * * ",env_data={}):
     targetName = target.replace('.',"-")
     if os.path.isdir("/code/scanners/{0}/cron/".format(scanner)):
         for filename in os.listdir("/code/scanners/{0}/cron/".format(scanner)):
+            template_name = filename.split(".")[0]
+            if templates is not None and template_name not in templates:
+                continue
             logging.debug(filename)
             haveDeployd=False
             try:

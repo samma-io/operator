@@ -19,16 +19,18 @@ api = client.CoreV1Api()
 batch1api = client.BatchV1Api()
 
 
-def deleteJob(scanner,target="samma.io"):
+def deleteJob(scanner,target="samma.io",templates=None):
     targetName = target.replace('.',"-")
     for filename in os.listdir("/code/scanners/{0}/job/".format(scanner)):
         job= filename.split(".")
+        if templates is not None and job[0] not in templates:
+            continue
         try:
             batch1api.delete_namespaced_job(namespace="samma-io",name="{0}-{1}-{2}".format(scanner,targetName,job[0]))
             logging.info("Delete samma scanner job {0}-{1}-{2}".format(scanner,targetName,job[0]))
         except:
             logging.info("ERROR samma scanner job {0}-{1}-{2}".format(scanner,targetName,job[0]))
-def deployJob(scanner,target="samma.io",env_data={}):
+def deployJob(scanner,target="samma.io",env_data={},templates=None):
     '''
 
     To deploy a job we go to the service folder.
@@ -38,6 +40,9 @@ def deployJob(scanner,target="samma.io",env_data={}):
 
     if os.path.isdir("/code/scanners/{0}/job/".format(scanner)):
         for filename in os.listdir("/code/scanners/{0}/job/".format(scanner)):
+            template_name = filename.split(".")[0]
+            if templates is not None and template_name not in templates:
+                continue
             print(filename)
             haveDeployd=False
             pods = batch1api.list_namespaced_job("samma-io")
