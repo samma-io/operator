@@ -3,9 +3,10 @@ import logging
 from kubernetes.client.rest import ApiException
 from kubernetes import client, config, watch
 import yaml
-import json 
+import json
 from pprint import pprint
 import os
+import requests
 
 
 #Our code
@@ -17,10 +18,13 @@ from profile_resolver import resolve_profiles, parse_scanner_spec
 ## Setup ENV 
 samma_io_id = os.getenv('SAMMA_IO_ID' , '1234')
 samma_io_tags = os.getenv('SAMMA_IO_TAGS' , ["samma"])
-samma_io_json = os.getenv('SAMMA_IO_JSON' , '{"samma":"scanner"}') 
+samma_io_json = os.getenv('SAMMA_IO_JSON' , '{"samma":"scanner"}')
 samma_io_scanners = os.getenv('SAMMA_IO_SCANNER' , "nmap")
 write_to_file = os.getenv('WRITE_TO_FILE' , 'true')
 elasticsearch = os.getenv('ELASTICSEARCH' , 'true')
+samma_io_api_url = os.getenv('SAMMA_IO_API_URL', 'https://www.samma.io')
+samma_io_api_token = os.getenv('SAMMA_IO_API_TOKEN', '')
+samma_io_profile_id = os.getenv('SAMMA_IO_PROFILE_ID', '')
 
 
 
@@ -95,6 +99,29 @@ def initOperator():
 ##
 #Init the initOperator
 initOperator()
+
+
+def post_target_to_api(host):
+    """POST a discovered domain to the external samma.io API if a token is configured."""
+    if not samma_io_api_token:
+        return
+    url = "{0}/api/v1/targets".format(samma_io_api_url.rstrip('/'))
+    payload = {
+        "value": host,
+        "type": "dns",
+        "label": host,
+    }
+    if samma_io_profile_id:
+        payload["profileId"] = samma_io_profile_id
+    headers = {
+        "Authorization": "Bearer {0}".format(samma_io_api_token),
+        "Content-Type": "application/json",
+    }
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        logging.info("Posted target %s to API: %s", host, resp.status_code)
+    except Exception as e:
+        logging.warning("Failed to post target %s to API: %s", host, e)
 
 
 ##Start lookin g for changes
@@ -245,6 +272,7 @@ def ingress_create_fn(body, spec, **kwargs):
         for scanner, template in scanner_specs:
             for target in targets:
                 host = target['host']
+                post_target_to_api(host)
                 host_sanitized = host.replace('.', '-')
                 if template:
                     resource_name = "{0}-{1}-{2}".format(scanner, host_sanitized, template)

@@ -1,12 +1,12 @@
-FROM python:3.7
+FROM python:3.12-slim
 
 #copy code
 COPY code/ /app/code/
 WORKDIR /app/code
 
 #Install deps
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip
+RUN pip install --no-cache-dir -r requirements.txt
 
 RUN useradd -ms /bin/bash samma
 RUN chown samma:samma /app/code/
@@ -17,4 +17,4 @@ USER samma
 EXPOSE 80
 
 # Start server
-ENTRYPOINT [ "./entrypoint.sh" ] 
+ENTRYPOINT [ "./entrypoint.sh" ]

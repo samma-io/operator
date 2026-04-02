@@ -1,4 +1,3 @@
-version: '3'
 services:
   operator:
     build: operator/.
@@ -13,4 +12,4 @@ services:
     volumes:
       - ./:/code
     ports:
-      - 8888:80
+      - 8889:80

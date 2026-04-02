@@ -1,7 +1,8 @@
-flask
-gunicorn
-prometheus-flask-exporter
-PyYAML
-kopf
-kubernetes
-redis
+flask>=3.0
+gunicorn>=21.2
+prometheus-flask-exporter>=0.23
+PyYAML>=6.0
+kopf>=1.37
+kubernetes>=29.0
+redis>=5.0
+requests>=2.31

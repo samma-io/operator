@@ -14,9 +14,9 @@ spec:
     spec:
       serviceAccountName: samma-operator
       containers:
-        - image: sammascanner/operator
+        - image: mattiashem/samma-operator:latest
           name: samma-service
-          imagePullPolicy: Never
+          imagePullPolicy: Always
           env:
             - name: nats
               value: nats
@@ -32,4 +32,8 @@ spec:
               value: elasticsearch
             - name: SAMMA_IO_SCANNER
               value: "nmap,nikto"
-          #command: ['python','-u','/code/service_watch.py']        
+            - name: SAMMA_IO_API_URL
+              value: "https://www.samma.io"
+            - name: SAMMA_IO_API_TOKEN
+              value: ""
+          #command: ['python','-u','/code/service_watch.py']

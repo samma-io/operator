@@ -93,8 +93,10 @@ spec:
         app: samma-operator
     spec:
       serviceAccountName: samma-operator
+      nodeSelector:
+        kubernetes.io/arch: amd64
       containers:
-        - image: sammascanner/operator:beta
+        - image: mattiashem/samma-operator:latest
           env:
             - name: nats
               value: nats
@@ -110,8 +112,18 @@ spec:
               value: elasticsearch
             - name: SAMMA_IO_SCANNER
               value: "nmap,nikto,tsunami"
+            - name: SAMMA_IO_API_URL
+              value: "https://www.samma.io"
+            - name: SAMMA_IO_API_TOKEN
+              value: ""
+            - name: SAMMA_IO_PROFILE_ID
+              value: ""
           name: samma-operator
           imagePullPolicy: Always
+          ports:
+          - name: http
+            containerPort: 8080
+            protocol: TCP
           resources:
             requests:
               cpu: 100m
@@ -119,6 +131,20 @@ spec:
             limits:
               cpu: 100m
               memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: operator
+  namespace: samma-io
+spec:
+  ports:
+  - port: 8080
+    name: http
+    targetPort: 8080
+  selector:
+    app: samma-operator
+  type: ClusterIP
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -143,6 +169,25 @@ spec:
           - name: http
             containerPort: 8080
             protocol: TCP
+          env:
+            - name: SAMMA_IO_ID
+              value: "12345"
+            - name: SAMMA_IO_TAGS
+              value: "['scanner','prod']"
+            - name: SAMMA_IO_JSON
+              value: '{"attacke":"true"}'
+            - name: WRITE_TO_FILE
+              value: "true"
+            - name: ELASTICSEARCH
+              value: elasticsearch
+            - name: SAMMA_IO_SCANNER
+              value: "nmap,nikto,tsunami"
+            - name: SAMMA_IO_API_URL
+              value: "https://www.samma.io"
+            - name: SAMMA_IO_API_TOKEN
+              value: ""
+            - name: SAMMA_IO_PROFILE_ID
+              value: ""
           resources:
             requests:
               cpu: 100m

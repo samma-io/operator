@@ -1,8 +1,7 @@
-FROM python:3.7 
-RUN pip install kopf && pip install kubernetes && pip install redis 
-RUN pip install PyYAML
-RUN pip install Jinja2
-COPY /code /code/ 
+FROM python:3.12-slim
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+COPY /code /code/
 
 RUN useradd -ms /bin/bash samma
 RUN chown samma:samma /code/

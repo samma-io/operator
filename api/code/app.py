@@ -1,12 +1,14 @@
-from turtle import write
 from flask import Flask, render_template, request
+import re
 import yaml
 import json
 import logging
 import os
+import requests as http_requests
 from kubernetes.client.rest import ApiException
 from kubernetes import client, config, watch
 from prometheus_flask_exporter import PrometheusMetrics
+from profile_resolver import resolve_profiles
 
 
 
@@ -17,20 +19,66 @@ except ImportError:
 
 # Load the kubernetes access
 config.load_incluster_config()
-k8sapi =client.CustomObjectsApi()
+k8sapi = client.CustomObjectsApi()
+core_v1_api = client.CoreV1Api()
+
+_GROUP, _VERSION, _NS, _PLURAL = 'samma.io', 'v1', 'samma-io', 'scanner'
+
+
+def sanitize_name(value):
+    name = value.lower()
+    name = re.sub(r'[^a-z0-9-]', '-', name)
+    name = re.sub(r'-+', '-', name).strip('-')
+    return name
+
+
+def make_crd_name(scanner, target, template=None):
+    parts = [scanner, sanitize_name(target)]
+    if template:
+        parts.append(template)
+    return '-'.join(parts)[:63]
 
 ## Setup the flask app
 app = Flask(__name__)
 metrics = PrometheusMetrics(app)
 
 
-## Setup ENV 
+## Setup ENV
 samma_io_id = os.getenv('SAMMA_IO_ID' , '1234')
 samma_io_tags = os.getenv('SAMMA_IO_TAGS' , ["samma"])
-samma_io_json = os.getenv('SAMMA_IO_JSON' , "{'samma':'scanner'}") 
+samma_io_json = os.getenv('SAMMA_IO_JSON' , "{'samma':'scanner'}")
 samma_io_scanners = os.getenv('SAMMA_IO_SCANNER' , ["nmap","nikto","tsunami"])
 write_to_file = os.getenv('WRITE_TO_FILE' , 'true')
 elasticsearch = os.getenv('ELASTICSEARCH' , 'true')
+samma_io_api_url = os.getenv('SAMMA_IO_API_URL', '')
+samma_io_api_token = os.getenv('SAMMA_IO_API_TOKEN', '')
+samma_io_profile_id = os.getenv('SAMMA_IO_PROFILE_ID', '')
+
+
+def post_target_to_api(target, target_id):
+    """POST a target to the external samma.io API for validation if a token is configured."""
+    if not samma_io_api_token:
+        return
+    url = "{0}/api/v1/targets".format(samma_io_api_url.rstrip('/'))
+    payload = {
+        "value": target,
+        "type": "dns",
+        "label": target,
+        "targetId": target_id,
+    }
+    if samma_io_profile_id:
+        payload["profileId"] = samma_io_profile_id
+    headers = {
+        "Authorization": "Bearer {0}".format(samma_io_api_token),
+        "Content-Type": "application/json",
+    }
+    try:
+        resp = http_requests.post(url, json=payload, headers=headers, timeout=10)
+        logging.info("Posted target %s to API: %s", target, resp.status_code)
+        return resp.status_code
+    except Exception as e:
+        logging.warning("Failed to post target %s to API: %s", target, e)
+        return None
 
 
 #
@@ -196,6 +244,108 @@ def delete_scanners():
     else:
         return 'No json in request {0}'.format(content)
     
+
+
+@app.route('/target', methods=['GET'])
+def list_targets():
+    try:
+        items = k8sapi.list_namespaced_custom_object(_GROUP, _VERSION, _NS, _PLURAL).get('items', [])
+    except ApiException as e:
+        return {"error": str(e)}, 500
+
+    target_map = {}
+    for item in items:
+        t = item.get('spec', {}).get('target')
+        if t:
+            target_map.setdefault(t, []).append(item['metadata']['name'])
+
+    return {"targets": [{"target": t, "scanners": sorted(n)} for t, n in sorted(target_map.items())]}, 200
+
+
+@app.route('/target', methods=['PUT'])
+def create_target():
+    if not request.is_json:
+        return {"error": "request must be JSON"}, 400
+    content = request.get_json()
+    target = (content.get('target') or '').strip()
+    if not target:
+        return {"error": "missing required field: target"}, 400
+
+    profile = content.get('profile', 'default')
+    scheduler = content.get('scheduler', '')
+    env_fields = {
+        'samma_io_id':   content.get('samma_io_id', samma_io_id),
+        'samma_io_tags': content.get('samma_io_tags', samma_io_tags),
+        'samma_io_json': content.get('samma_io_json', samma_io_json),
+        'write_to_file': content.get('write_to_file', write_to_file),
+        'elasticsearch': content.get('elasticsearch', elasticsearch),
+    }
+
+    resolved = resolve_profiles([profile], core_v1_api)
+    if not resolved:
+        return {"error": "unknown or empty profile: {0}".format(profile)}, 400
+
+    post_target_to_api(target, env_fields['samma_io_id'])
+
+    created, skipped = [], []
+    for scanner, template in resolved:
+        name = make_crd_name(scanner, target, template)
+        spec = {
+            "target": target,
+            "scanners": [scanner],
+            "samma_io_id": env_fields['samma_io_id'],
+            "samma_io_tags": env_fields['samma_io_tags'],
+            "samma_io_json": env_fields['samma_io_json'],
+            "write_to_file": env_fields['write_to_file'],
+            "elasticsearch": env_fields['elasticsearch'],
+        }
+        if scheduler:
+            spec["scheduler"] = scheduler
+        if template:
+            spec["templates"] = [template]
+
+        body = {"apiVersion": "samma.io/v1", "kind": "Scanner",
+                "metadata": {"name": name, "namespace": _NS}, "spec": spec}
+        try:
+            k8sapi.create_namespaced_custom_object(_GROUP, _VERSION, _NS, _PLURAL, body)
+            created.append(name)
+        except ApiException as e:
+            if e.status == 409:
+                skipped.append(name)
+            else:
+                return {"error": str(e), "created": created, "skipped": skipped}, 500
+
+    status = 207 if skipped else 201
+    return {"target": target, "profile": profile, "created": created, "skipped": skipped}, status
+
+
+@app.route('/target', methods=['DELETE'])
+def delete_target():
+    if not request.is_json:
+        return {"error": "request must be JSON"}, 400
+    target = (request.get_json().get('target') or '').strip()
+    if not target:
+        return {"error": "missing required field: target"}, 400
+
+    try:
+        items = k8sapi.list_namespaced_custom_object(_GROUP, _VERSION, _NS, _PLURAL).get('items', [])
+    except ApiException as e:
+        return {"error": str(e)}, 500
+
+    to_delete = [i for i in items if i.get('spec', {}).get('target') == target]
+    if not to_delete:
+        return {"error": "no Scanner CRDs found for target: {0}".format(target)}, 404
+
+    deleted, errors = [], []
+    for item in to_delete:
+        name = item['metadata']['name']
+        try:
+            k8sapi.delete_namespaced_custom_object(_GROUP, _VERSION, _NS, _PLURAL, name, grace_period_seconds=0)
+            deleted.append(name)
+        except ApiException as e:
+            errors.append({"name": name, "error": str(e)})
+
+    return {"target": target, "deleted": deleted, "errors": errors}, (207 if errors else 200)
 
 
 #
