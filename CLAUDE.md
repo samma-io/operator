@@ -25,13 +25,28 @@ Each scanner (nmap, nikto, tsunami, base) has `job/` and `cron/` subdirectories 
 A Flask app (`api/code/app.py`) providing a REST interface and web UI for managing scanners:
 - `GET /` — HTML page listing scanners
 - `GET /scanner` — List all Scanner CRDs as JSON
-- `PUT /scanner` — Create a Scanner CRD from JSON
+- `PUT /scanner` — Create a Scanner CRD from JSON (low-level, explicit scanner list)
 - `DELETE /scanner` — Delete a Scanner CRD by name
+- `GET /target` — List all unique targets aggregated from Scanner CRD `spec.target` fields
+- `PUT /target` — Add a target: resolves a profile to a scanner list and creates one Scanner CRD per scanner. Also calls the external samma.io API (`post_target_to_api`) with `targetId` if `SAMMA_IO_API_TOKEN` is set.
+- `DELETE /target` — Remove a target: lists all Scanner CRDs and deletes every one whose `spec.target` matches
 - `GET /health`, `GET /ready` — Kubernetes health/readiness probes
 - Prometheus metrics via `prometheus-flask-exporter`
 
+#### Profile resolution in the API
+`api/code/profile_resolver.py` (copied from `operator/code/profile_resolver.py`) reads the `scanner-profiles` ConfigMap and resolves profile names (e.g. `default`, `web`, `network`, `full`) into `(scanner, template_or_none)` tuples. The API requires `client.CoreV1Api()` (stored as `core_v1_api`) in addition to `CustomObjectsApi()` to read that ConfigMap.
+
+#### External API validation
+When `PUT /target` is called, `post_target_to_api(target, target_id)` POSTs the target to the external samma.io API for validation/registration. Controlled by three env vars:
+- `SAMMA_IO_API_URL` — base URL of the external API
+- `SAMMA_IO_API_TOKEN` — Bearer token; if empty, the call is skipped
+- `SAMMA_IO_PROFILE_ID` — optional profile ID added to the payload
+
+#### CRD naming convention
+`PUT /target` names Scanner CRDs as `{scanner}-{sanitized_target}[-{template}]` (matching the Ingress handler pattern), where sanitization lowercases and replaces non-alphanumeric characters with `-`. Max 63 characters (Kubernetes limit).
+
 ### CRD & Manifests (`manifest/`)
-- `samma-operator.yaml` — Full cluster deployment: namespace `samma-io`, CRD definition for `Scanner`, RBAC, operator Deployment, API Deployment, and Service.
+- `samma-operator.yaml` — Full cluster deployment: namespace `samma-io`, CRD definition for `Scanner`, RBAC, operator Deployment with a ClusterIP Service (port 8080), API Deployment with a ClusterIP Service (port 8080).
 - `manifest/test/` — Example Scanner CRDs for testing.
 
 ## Build & Development Commands
@@ -67,17 +82,19 @@ On push/PR to `main`, the `.github/workflows/build.yaml` workflow:
 - Tags with git SHA and `latest`
 
 ### Operator Dependencies (`operator/requirements.txt`)
-kopf, kubernetes, redis, PyYAML, Jinja2
+kopf, kubernetes, redis, PyYAML, Jinja2, requests
 
 ### API Dependencies (`api/code/requirements.txt`)
-flask, gunicorn, prometheus-flask-exporter, PyYAML, kopf, kubernetes, redis
+flask, gunicorn, prometheus-flask-exporter, PyYAML, kopf, kubernetes, redis, requests
 
 ## Key Concepts
 
 - All scanners deploy into the `samma-io` namespace.
-- Target names are sanitized by replacing `.` with `-` for use in Kubernetes resource names.
-- The operator initializes by ensuring `filebeat` and `live` ConfigMaps exist in `samma-io` namespace (from `scanners/core/` configs).
+- Target names are sanitized (lowercase, non-alphanumeric → `-`) for use in Kubernetes resource names. Max 63 chars.
+- The operator initializes by ensuring `filebeat`, `live`, and `scanner-profiles` ConfigMaps exist in `samma-io` namespace.
 - Scanner results are written to files and shipped to Elasticsearch via Filebeat sidecars when `write_to_file` and `elasticsearch` are set.
 - Environment config is passed via env vars: `SAMMA_IO_ID`, `SAMMA_IO_TAGS`, `SAMMA_IO_JSON`, `SAMMA_IO_SCANNER`, `WRITE_TO_FILE`, `ELASTICSEARCH`.
+- External API integration uses `SAMMA_IO_API_URL`, `SAMMA_IO_API_TOKEN`, `SAMMA_IO_PROFILE_ID` (both operator and API).
 - CronJob templates use `apiVersion: batch/v1` and the operator uses `client.BatchV1Api()`.
 - Python 3.12 is used for both operator and API images.
+- `profile_resolver.py` exists in both `operator/code/` and `api/code/` — keep them in sync if the profile logic changes.
