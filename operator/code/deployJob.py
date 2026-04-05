@@ -66,7 +66,8 @@ def deployJob(scanner,target="samma.io",env_data={},templates=None):
                     except ValueError:
                         logging.info("########################")
                         logging.info(SCANNERFirst)
-                    toDeployYaml = t.render(NAME="{0}-{1}".format(scanner,targetName),TARGET=target,ENV=env_data,SCANNERFirst=SCANNERFirst)
+                    safe_env = {k: str(v).replace('"', '\\"') for k, v in env_data.items()}
+                    toDeployYaml = t.render(NAME="{0}-{1}".format(scanner,targetName),TARGET=target,ENV=safe_env,SCANNERFirst=SCANNERFirst)
                     logging.debug(toDeployYaml)
                     #Make to json
                     toDeploy = yaml.load(toDeployYaml, Loader=Loader)

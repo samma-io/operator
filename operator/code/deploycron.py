@@ -59,8 +59,9 @@ def deployCron(scanner,target="samma.io",sceduler="15 0 * * * ",env_data={},temp
                     #Open the yaml file
 
                     f = open("/code/scanners/{0}/cron/{1}".format(scanner,filename), "r")
-                    #Add values to 
+                    #Add values to
                     t = Template(f.read())
+                    SCANNERFirst="string"
                     try:
                         SCANNERFirst=int(target[0])
                         logging.info("########################")
@@ -68,7 +69,8 @@ def deployCron(scanner,target="samma.io",sceduler="15 0 * * * ",env_data={},temp
                     except ValueError:
                         logging.info("########################")
                         logging.info(SCANNERFirst)
-                    toDeployYaml = t.render(NAME="{0}-{1}".format(scanner,targetName),TARGET=target,SCHEDULER=sceduler,ENV=env_data,SCANNERFirst=SCANNERFirst)
+                    safe_env = {k: str(v).replace('"', '\\"') for k, v in env_data.items()}
+                    toDeployYaml = t.render(NAME="{0}-{1}".format(scanner,targetName),TARGET=target,SCHEDULER=sceduler,ENV=safe_env,SCANNERFirst=SCANNERFirst)
                     logging.debug(toDeployYaml)
                     #Make to json
                     toDeploy = yaml.load(toDeployYaml, Loader=Loader)

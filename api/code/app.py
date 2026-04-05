@@ -273,9 +273,12 @@ def create_target():
 
     profile = content.get('profile', 'default')
     scheduler = content.get('scheduler', '')
+    tags = content.get('samma_io_tags', samma_io_tags)
+    if isinstance(tags, str):
+        tags = [t.strip().strip("'\"") for t in tags.strip('[]').split(',') if t.strip()]
     env_fields = {
         'samma_io_id':   content.get('samma_io_id', samma_io_id),
-        'samma_io_tags': content.get('samma_io_tags', samma_io_tags),
+        'samma_io_tags': tags,
         'samma_io_json': content.get('samma_io_json', samma_io_json),
         'write_to_file': content.get('write_to_file', write_to_file),
         'elasticsearch': content.get('elasticsearch', elasticsearch),
