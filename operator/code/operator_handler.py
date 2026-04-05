@@ -25,6 +25,9 @@ elasticsearch = os.getenv('ELASTICSEARCH' , 'true')
 samma_io_api_url = os.getenv('SAMMA_IO_API_URL', 'https://www.samma.io')
 samma_io_api_token = os.getenv('SAMMA_IO_API_TOKEN', '')
 samma_io_profile_id = os.getenv('SAMMA_IO_PROFILE_ID', '')
+nats_url     = os.getenv('NATS_URL', 'nats://nats:4222')
+nats_enabled = os.getenv('NATS_ENABLED', 'True')
+nats_subject = os.getenv('NATS_SUBJECT', 'samma-io.scan')
 
 
 
@@ -168,6 +171,10 @@ def create_fn(body, spec, **kwargs):
         pass
 
     templates = body['spec'].get('templates', None)
+
+    env_data['NATS_URL']     = nats_url
+    env_data['NATS_ENABLED'] = nats_enabled
+    env_data['NATS_SUBJECT'] = nats_subject
 
     #Deploy the scanners
     for scanner in scanners:

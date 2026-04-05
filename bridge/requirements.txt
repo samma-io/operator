@@ -1,0 +1,2 @@
+nats-py>=2.3
+asyncpg>=0.29
