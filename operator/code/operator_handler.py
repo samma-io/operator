@@ -28,6 +28,7 @@ samma_io_profile_id = os.getenv('SAMMA_IO_PROFILE_ID', '')
 nats_url     = os.getenv('NATS_URL', 'nats://nats:4222')
 nats_enabled = os.getenv('NATS_ENABLED', 'True')
 nats_subject = os.getenv('NATS_SUBJECT', 'samma-io.scan')
+default_weekly_schedule = os.getenv('SAMMA_IO_WEEKLY_SCHEDULE', '0 0 * * 0')
 
 
 
@@ -91,6 +92,7 @@ def initOperator():
                 "web": "nikto,nmap/http",
                 "network": "nmap/port,nmap/tls",
                 "full": "nmap,nikto,tsunami,base",
+                "detect": "port-scanner,dns-scanner,http-headers-scanner,tls-scanner",
             }
         )
         try:
@@ -176,15 +178,11 @@ def create_fn(body, spec, **kwargs):
     env_data['NATS_ENABLED'] = nats_enabled
     env_data['NATS_SUBJECT'] = nats_subject
 
-    #Deploy the scanners
+    #Deploy the scanners — always run an immediate Job and a weekly CronJob
+    cron_schedule = scheduler if scheduler != "none" else default_weekly_schedule
     for scanner in scanners:
-        #What kind of jov do we want. Lets check if there is a scedule tag.
-        # If there is a schudel tag then deploy a cronjob !
-        if scheduler != "none":
-            deployCron(scanner,target,scheduler,env_data,templates=templates)
-        else:
-            #Nope no sceduler lets deploy this a job
-            deployJob(scanner,target,env_data,templates=templates)
+        deployJob(scanner, target, env_data, templates=templates)
+        deployCron(scanner, target, cron_schedule, env_data, templates=templates)
 
 
 
@@ -208,11 +206,8 @@ def delete(body, **kwargs):
     templates = body['spec'].get('templates', None)
     for scanner in scanners:
         try:
-            if scheduler != "none":
-                deleteCron(scanner,target,templates=templates)
-            else:
-                #Nope no sceduler lets delete a job
-                deleteJob(scanner,target,templates=templates)
+            deleteJob(scanner, target, templates=templates)
+            deleteCron(scanner, target, templates=templates)
         except:
             logging.info("Got some error when deleteing")
 
