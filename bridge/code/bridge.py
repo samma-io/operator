@@ -29,7 +29,13 @@ SELECT create_hypertable('scan_results', 'time', if_not_exists => TRUE);
 
 
 async def main():
-    db = await asyncpg.connect(DATABASE_URL)
+    db = None
+    while db is None:
+        try:
+            db = await asyncpg.connect(DATABASE_URL)
+        except Exception as e:
+            logging.warning("DB not ready, retrying in 5s: %s", e)
+            await asyncio.sleep(5)
     await db.execute(CREATE_TABLE)
     logging.info("TimescaleDB ready")
 
