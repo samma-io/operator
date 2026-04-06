@@ -12,7 +12,7 @@ spec:
         args: ["--ip-v4-target={{ TARGET }}","--scan-results-local-output-format=JSON","--scan-results-local-output-filename=/out/tsunami-output.json"]
         {% else %}
         args: ["--hostname-target={{ TARGET }}","--scan-results-local-output-format=JSON","--scan-results-local-output-filename=/out/tsunami-output.json"]
-        {% endif %}       
+        {% endif %}
         env:
           - name: TARGET
             value: {{ TARGET }}
@@ -20,61 +20,6 @@ spec:
             value: tsunami
         {% for user in ENV %}
           - name: {{ user }}
-            value: "{{ ENV[user]}}"
+            value: "{{ ENV[user] }}"
         {% endfor %}
-          - name: PARSER
-            value: tsunami
-        volumeMounts:
-          - mountPath: /out
-            name: out-volume
-      - name: logger
-        image: sammascanner/logger:0.1
-        env:
-          - name: FILE
-            value: tsunami-output.json
-          - name: TARGET
-            value: {{ TARGET }}
-          - name: SAMMA_IO_SCANNER
-            value: tsunami
-        {% for user in ENV %}
-          - name: {{ user }}
-            value: "{{ ENV[user]}}"
-        {% endfor %}
-          - name: PARSER
-            value: tsunami
-        volumeMounts:
-          - mountPath: /out
-            name: out-volume
-      - name: filebeat
-        image: docker.elastic.co/beats/filebeat:7.16.0
-        env:
-          - name: ELASTICSEARCH
-            value: elasticsearch:9200
-        livenessProbe:
-          exec:
-            command:
-              - /bin/sh
-              - '-c'
-              - /live.sh
-          initialDelaySeconds: 10
-          periodSeconds: 30
-        volumeMounts:
-        - name: filebeat
-          mountPath: "/usr/share/filebeat/filebeat.yml"
-          subPath: "filebeat.yml"
-        - name: liveness
-          mountPath: "/live.sh"
-          subPath: "live.sh"
-        - mountPath: /out
-          name: out-volume
-      volumes:
-      - name: filebeat
-        configMap:
-          name: filebeat
-      - name: liveness
-        configMap:
-          name: live
-          defaultMode: 0777
-      - name: out-volume
-        emptyDir: {}
       restartPolicy: Never

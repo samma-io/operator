@@ -93,6 +93,8 @@ def initOperator():
                 "network": "nmap/port,nmap/tls",
                 "full": "nmap,nikto,tsunami,base",
                 "detect": "port-scanner,dns-scanner,http-headers-scanner,tls-scanner",
+                "classic": "nikto,nmap/port,nmap/http,nmap/tls,tsunami",
+                "all": "port-scanner,dns-scanner,http-headers-scanner,tls-scanner,nikto,nmap/port,nmap/http,nmap/tls,tsunami",
             }
         )
         try:
