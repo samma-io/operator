@@ -1,0 +1,20 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ NAME }}
+spec:
+  template:
+    spec:
+      containers:
+      - name: http-redirect-scanner
+        image: ghcr.io/samma-io/detect-http-redirect-scanner:latest
+        env:
+          - name: TARGET
+            value: {{ TARGET }}
+          - name: SAMMA_IO_SCANNER
+            value: http-redirect-scanner
+        {% for user in ENV %}
+          - name: {{ user }}
+            value: "{{ ENV[user] }}"
+        {% endfor %}
+      restartPolicy: Never
