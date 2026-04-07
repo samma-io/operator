@@ -150,23 +150,23 @@ def create_fn(body, spec, **kwargs):
         print(scanners)
 
     try:
-        env_data['samma_io_id'] = body['spec']['samma_io_id'] or samma_io_id
+        env_data['SAMMA_IO_ID'] = body['spec']['samma_io_id'] or samma_io_id
     except:
         pass
     try:
-        env_data['samma_io_tags']=  body['spec']['samma_io_tags'] or samma_io_tags
+        env_data['SAMMA_IO_TAGS'] = body['spec']['samma_io_tags'] or samma_io_tags
     except:
         pass
     try:
-        env_data['samme_io_json']= body['spec']['samma_io_json'] or samma_io_json
+        env_data['SAMMA_IO_JSON'] = body['spec']['samma_io_json'] or samma_io_json
     except:
         pass
     try:
-        env_data['write_to_file']= body['spec']['write_to_file'] or  write_to_file
+        env_data['WRITE_TO_FILE'] = body['spec']['write_to_file'] or write_to_file
     except:
         pass
     try:
-        env_data['elasticsearch']= body['spec']['elasticsearch'] or "elasticsearch"
+        env_data['ELASTICSEARCH'] = body['spec']['elasticsearch'] or "elasticsearch"
     except:
         pass
     try:
