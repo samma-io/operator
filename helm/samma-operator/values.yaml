@@ -1,0 +1,89 @@
+# Namespace to deploy into
+namespace: samma-io
+
+# Node architecture selector (set to "" to disable)
+nodeSelector:
+  kubernetes.io/arch: amd64
+
+# Operator component
+operator:
+  image: mattiashem/samma-operator
+  tag: latest
+  pullPolicy: Always
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 100m
+      memory: 256Mi
+
+# API component
+api:
+  image: sammascanner/api
+  tag: latest
+  pullPolicy: Always
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 512Mi
+
+# NATS message broker
+nats:
+  image: nats
+  tag: "2"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+# TimescaleDB — scan results storage
+timescaledb:
+  image: timescale/timescaledb
+  tag: latest-pg15
+  storage: 10Gi
+  # storageClass: "" # set to use a specific StorageClass
+  db: samma
+  user: samma
+  password: samma   # override in production!
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Bridge — NATS → TimescaleDB
+bridge:
+  image: sammascanner/bridge
+  tag: latest
+  pullPolicy: Always
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# Shared scanner configuration
+config:
+  sammaIoId: ""
+  sammaIoTags: "['scanner']"
+  sammaIoJson: "{}"
+  writeToFile: "true"
+  # NATS
+  natsUrl: "nats://nats:4222"
+  natsEnabled: "True"
+  natsSubject: "samma-io.scan"
+  # External samma.io API (leave apiToken empty to disable)
+  apiUrl: "https://www.samma.io"
+  apiToken: ""
+  profileId: ""

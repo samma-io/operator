@@ -3,18 +3,16 @@ kind: Namespace
 metadata:
   name: samma-io
 ---
-apiVersion: apiextensions.k8s.io/v1 
-kind: CustomResourceDefinition 
-metadata: 
-  name: scanner.samma.io 
-spec: 
-  scope: Namespaced 
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: scanner.samma.io
+spec:
+  scope: Namespaced
   group: samma.io
   versions:
     - name: v1
-      # Each version can be enabled/disabled by Served flag.
       served: true
-      # One and only one version must be marked as the storage version.
       storage: true
       schema:
         openAPIV3Schema:
@@ -51,32 +49,31 @@ spec:
                     type: string
                 profile:
                   type: string
-
-  names: 
+  names:
     kind: Scanner
     plural: scanner
-    singular: scanner 
-    shortNames: 
+    singular: scanner
+    shortNames:
       - sc
 ---
-apiVersion: v1 
-kind: ServiceAccount 
-metadata: 
+apiVersion: v1
+kind: ServiceAccount
+metadata:
   name: samma-operator
   namespace: samma-io
 ---
-apiVersion: rbac.authorization.k8s.io/v1 
-kind: ClusterRoleBinding 
-metadata: 
-  name: samma-operator 
-roleRef: 
-  apiGroup: rbac.authorization.k8s.io 
-  kind: ClusterRole 
-  name: cluster-admin 
-subjects: 
-  - kind: ServiceAccount 
-    name: samma-operator 
-    namespace: samma-io 
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: samma-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: samma-operator
+    namespace: samma-io
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -96,22 +93,22 @@ spec:
       nodeSelector:
         kubernetes.io/arch: amd64
       containers:
-        - image: mattiashem/samma-operator:latest
+        - name: samma-operator
+          image: mattiashem/samma-operator:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
           env:
-            - name: nats
-              value: nats
             - name: SAMMA_IO_ID
-              value: "12345"
+              value: ""
             - name: SAMMA_IO_TAGS
-              value: "['scanner','prod']"
+              value: "['scanner']"
             - name: SAMMA_IO_JSON
-              value: '{"attacke":"true"}'
+              value: "{}"
             - name: WRITE_TO_FILE
               value: "true"
-            - name: ELASTICSEARCH
-              value: elasticsearch
-            - name: SAMMA_IO_SCANNER
-              value: "nmap,nikto,tsunami"
             - name: SAMMA_IO_API_URL
               value: "https://www.samma.io"
             - name: SAMMA_IO_API_TOKEN
@@ -119,17 +116,11 @@ spec:
             - name: SAMMA_IO_PROFILE_ID
               value: ""
             - name: NATS_URL
-              value: nats://nats:4222
+              value: "nats://nats:4222"
             - name: NATS_ENABLED
               value: "True"
             - name: NATS_SUBJECT
-              value: samma-io.scan
-          name: samma-operator
-          imagePullPolicy: Always
-          ports:
-          - name: http
-            containerPort: 8080
-            protocol: TCP
+              value: "samma-io.scan"
           resources:
             requests:
               cpu: 100m
@@ -144,12 +135,12 @@ metadata:
   name: operator
   namespace: samma-io
 spec:
-  ports:
-  - port: 8080
-    name: http
-    targetPort: 8080
   selector:
     app: samma-operator
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
   type: ClusterIP
 ---
 apiVersion: apps/v1
@@ -170,26 +161,22 @@ spec:
       nodeSelector:
         kubernetes.io/arch: amd64
       containers:
-        - image: sammascanner/api:beta2
-          name: samma-api
+        - name: samma-api
+          image: sammascanner/api:latest
           imagePullPolicy: Always
           ports:
-          - name: http
-            containerPort: 8080
-            protocol: TCP
+            - name: http
+              containerPort: 8080
+              protocol: TCP
           env:
             - name: SAMMA_IO_ID
-              value: "12345"
+              value: ""
             - name: SAMMA_IO_TAGS
-              value: "['scanner','prod']"
+              value: "['scanner']"
             - name: SAMMA_IO_JSON
-              value: '{"attacke":"true"}'
+              value: "{}"
             - name: WRITE_TO_FILE
               value: "true"
-            - name: ELASTICSEARCH
-              value: elasticsearch
-            - name: SAMMA_IO_SCANNER
-              value: "nmap,nikto,tsunami"
             - name: SAMMA_IO_API_URL
               value: "https://www.samma.io"
             - name: SAMMA_IO_API_TOKEN
@@ -203,7 +190,6 @@ spec:
             limits:
               cpu: 200m
               memory: 512Mi
-
 ---
 apiVersion: v1
 kind: Service
@@ -211,12 +197,12 @@ metadata:
   name: api
   namespace: samma-io
 spec:
-  ports:
-  - port: 8080
-    name: api
-    targetPort: 8080
   selector:
     app: samma-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
   type: ClusterIP
 ---
 apiVersion: apps/v1
@@ -236,8 +222,8 @@ spec:
       nodeSelector:
         kubernetes.io/arch: amd64
       containers:
-        - image: nats:2
-          name: nats
+        - name: nats
+          image: nats:2
           ports:
             - containerPort: 4222
             - containerPort: 8222
@@ -294,8 +280,8 @@ spec:
       nodeSelector:
         kubernetes.io/arch: amd64
       containers:
-        - image: timescale/timescaledb:latest-pg15
-          name: timescaledb
+        - name: timescaledb
+          image: timescale/timescaledb:latest-pg15
           env:
             - name: POSTGRES_DB
               value: samma
@@ -353,8 +339,8 @@ spec:
       nodeSelector:
         kubernetes.io/arch: amd64
       containers:
-        - image: sammascanner/bridge:latest
-          name: samma-bridge
+        - name: samma-bridge
+          image: sammascanner/bridge:latest
           imagePullPolicy: Always
           env:
             - name: NATS_URL

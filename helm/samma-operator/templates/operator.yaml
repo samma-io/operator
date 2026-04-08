@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: samma-operator
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    matchLabels:
+      app: samma-operator
+  template:
+    metadata:
+      labels:
+        app: samma-operator
+    spec:
+      serviceAccountName: samma-operator
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: samma-operator
+          image: {{ .Values.operator.image }}:{{ .Values.operator.tag }}
+          imagePullPolicy: {{ .Values.operator.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: SAMMA_IO_ID
+              value: {{ .Values.config.sammaIoId | quote }}
+            - name: SAMMA_IO_TAGS
+              value: {{ .Values.config.sammaIoTags | quote }}
+            - name: SAMMA_IO_JSON
+              value: {{ .Values.config.sammaIoJson | quote }}
+            - name: WRITE_TO_FILE
+              value: {{ .Values.config.writeToFile | quote }}
+            - name: NATS_URL
+              value: {{ .Values.config.natsUrl | quote }}
+            - name: NATS_ENABLED
+              value: {{ .Values.config.natsEnabled | quote }}
+            - name: NATS_SUBJECT
+              value: {{ .Values.config.natsSubject | quote }}
+            - name: SAMMA_IO_API_URL
+              value: {{ .Values.config.apiUrl | quote }}
+            - name: SAMMA_IO_API_TOKEN
+              value: {{ .Values.config.apiToken | quote }}
+            - name: SAMMA_IO_PROFILE_ID
+              value: {{ .Values.config.profileId | quote }}
+          resources:
+            {{- toYaml .Values.operator.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: operator
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app: samma-operator
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP

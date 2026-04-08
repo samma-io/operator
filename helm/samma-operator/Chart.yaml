@@ -1,0 +1,13 @@
+apiVersion: v2
+name: samma-operator
+description: Kubernetes operator for automated security scanning
+type: application
+version: 0.1.0
+appVersion: "latest"
+home: https://samma.io
+sources:
+  - https://github.com/samma-io/operator
+keywords:
+  - security
+  - scanning
+  - operator

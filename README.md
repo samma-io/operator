@@ -353,6 +353,112 @@ Same env vars as operator, plus the external API vars above.
 
 ---
 
+## Deploying the operator
+
+### Prerequisites
+
+- Kubernetes cluster (1.21+)
+- `kubectl` configured against the cluster
+- Helm 3 (for Helm install)
+
+---
+
+### Option 1 — Raw manifest (quickest)
+
+Deploys everything into the `samma-io` namespace with default settings.
+
+```bash
+kubectl apply -f manifest/samma-operator.yaml
+```
+
+Verify:
+
+```bash
+kubectl get pods -n samma-io
+```
+
+Expected pods: `samma-operator`, `samma-api`, `nats`, `timescaledb`, `samma-bridge`.
+
+Access the API from inside the cluster at `http://api.samma-io.svc:8080`, or port-forward for local access:
+
+```bash
+kubectl port-forward svc/api 8080:8080 -n samma-io
+curl http://localhost:8080/health
+```
+
+---
+
+### Option 2 — Helm chart
+
+The Helm chart is in `helm/samma-operator/` and exposes all images, credentials, and config as values.
+
+**Install with defaults:**
+
+```bash
+helm install samma-operator helm/samma-operator/
+```
+
+**Install with custom values:**
+
+```bash
+helm install samma-operator helm/samma-operator/ \
+  --set timescaledb.password=mysecretpassword \
+  --set config.sammaIoId=my-org-id \
+  --set config.apiToken=my-token
+```
+
+**Or use a values file** (recommended for production):
+
+```yaml
+# my-values.yaml
+namespace: samma-io
+
+timescaledb:
+  password: mysecretpassword
+  storage: 50Gi
+
+config:
+  sammaIoId: my-org-id
+  sammaIoTags: "['scanner','prod']"
+  apiUrl: https://www.samma.io
+  apiToken: my-token
+  profileId: my-profile-id
+```
+
+```bash
+helm install samma-operator helm/samma-operator/ -f my-values.yaml
+```
+
+**Upgrade after changing values:**
+
+```bash
+helm upgrade samma-operator helm/samma-operator/ -f my-values.yaml
+```
+
+**Uninstall:**
+
+```bash
+helm uninstall samma-operator
+kubectl delete namespace samma-io   # removes all data
+```
+
+**Key Helm values:**
+
+| Value | Default | Description |
+|---|---|---|
+| `namespace` | `samma-io` | Namespace to deploy into |
+| `operator.image` / `operator.tag` | `mattiashem/samma-operator:latest` | Operator image |
+| `api.image` / `api.tag` | `sammascanner/api:latest` | API image |
+| `timescaledb.password` | `samma` | Database password — change in production |
+| `timescaledb.storage` | `10Gi` | PVC size for scan results |
+| `config.sammaIoId` | `""` | Default asset ID attached to all scans |
+| `config.sammaIoTags` | `['scanner']` | Default tags |
+| `config.apiToken` | `""` | External samma.io API token |
+| `config.natsUrl` | `nats://nats:4222` | NATS server URL |
+| `nodeSelector` | `kubernetes.io/arch: amd64` | Node selector for all pods |
+
+---
+
 ## Build & Development
 
 ```bash
@@ -363,9 +469,6 @@ docker compose up
 # Kubernetes (skaffold)
 cd operator && skaffold dev
 cd api && skaffold dev
-
-# Deploy to cluster
-kubectl apply -f manifest/samma-operator.yaml
 ```
 
 ### Devcontainer

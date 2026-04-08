@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: samma-bridge
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    matchLabels:
+      app: samma-bridge
+  template:
+    metadata:
+      labels:
+        app: samma-bridge
+    spec:
+      serviceAccountName: samma-operator
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: samma-bridge
+          image: {{ .Values.bridge.image }}:{{ .Values.bridge.tag }}
+          imagePullPolicy: {{ .Values.bridge.pullPolicy }}
+          env:
+            - name: NATS_URL
+              value: {{ .Values.config.natsUrl | quote }}
+            - name: NATS_SUBJECT
+              value: {{ .Values.config.natsSubject | quote }}
+            - name: DATABASE_URL
+              value: "postgresql://{{ .Values.timescaledb.user }}:{{ .Values.timescaledb.password }}@timescaledb:5432/{{ .Values.timescaledb.db }}"
+          resources:
+            {{- toYaml .Values.bridge.resources | nindent 12 }}
