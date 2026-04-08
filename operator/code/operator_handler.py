@@ -88,13 +88,14 @@ def initOperator():
         profiles_cm = client.V1ConfigMap(
             metadata=client.V1ObjectMeta(name="scanner-profiles", namespace="samma-io"),
             data={
-                "default": "nmap,nikto",
-                "web": "nikto,nmap/http",
-                "network": "nmap/port,nmap/tls",
-                "full": "nmap,nikto,tsunami,base",
-                "detect": "port-scanner,dns-scanner,http-headers-scanner,tls-scanner,traceroute-scanner,ssh-banner-scanner,whois-scanner,http-redirect-scanner",
+                "default": "http-headers-scanner,http-redirect-scanner,tls-scanner,nikto,nmap/http,port-scanner,traceroute-scanner,ssh-banner-scanner,nmap/port,nmap/tls,dns-scanner,whois-scanner",
+                "web":     "http-headers-scanner,http-redirect-scanner,tls-scanner,nikto,nmap/http",
+                "network": "port-scanner,traceroute-scanner,ssh-banner-scanner,nmap/port,nmap/tls",
+                "dns":     "dns-scanner,whois-scanner",
+                "detect":  "port-scanner,dns-scanner,http-headers-scanner,tls-scanner,traceroute-scanner,ssh-banner-scanner,whois-scanner,http-redirect-scanner",
                 "classic": "nikto,nmap/port,nmap/http,nmap/tls,tsunami",
-                "all": "port-scanner,dns-scanner,http-headers-scanner,tls-scanner,traceroute-scanner,ssh-banner-scanner,whois-scanner,http-redirect-scanner,nikto,nmap/port,nmap/http,nmap/tls,tsunami",
+                "all":     "http-headers-scanner,http-redirect-scanner,tls-scanner,nikto,nmap/http,port-scanner,traceroute-scanner,ssh-banner-scanner,nmap/port,nmap/tls,dns-scanner,whois-scanner,tsunami",
+                "full":    "nmap,nikto,tsunami,base",
             }
         )
         try:

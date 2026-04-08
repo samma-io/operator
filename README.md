@@ -123,15 +123,16 @@ spec:
 
 Profiles are stored in the `scanner-profiles` ConfigMap in the `samma-io` namespace. Pass `"profile": "<name>"` to `PUT /target` to select one.
 
-| Profile | Scanners | Description |
+| Profile | Scanners | Use when |
 |---|---|---|
-| `detect` | port-scanner, dns-scanner, http-headers-scanner, tls-scanner | Modern NATS-native scanners |
-| `classic` | nikto, nmap/port, nmap/http, nmap/tls, tsunami | Traditional scanner suite |
-| `all` | detect + classic combined | Full coverage |
-| `default` | nmap, nikto | Basic scan |
-| `web` | nikto, nmap/http | Web-focused |
-| `network` | nmap/port, nmap/tls | Network and TLS only |
-| `full` | nmap, nikto, tsunami, base | Full classic suite |
+| `default` | web + network + dns (all 12 scanners) | Full scan of a new target |
+| `web` | http-headers, http-redirect, tls, nikto, nmap/http | Web application targets |
+| `network` | port, traceroute, ssh-banner, nmap/port, nmap/tls | Infrastructure / server targets |
+| `dns` | dns-scanner, whois-scanner | Domain intelligence only |
+| `detect` | All 8 modern detect scanners | NATS-native lightweight scan |
+| `classic` | nikto, nmap (port/http/tls), tsunami | Traditional deep scan |
+| `all` | All 12 scanners + tsunami | Maximum coverage |
+| `full` | nmap, nikto, tsunami, base | Legacy full scan (filebeat) |
 
 Customise profiles by patching the ConfigMap:
 
