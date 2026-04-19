@@ -1,0 +1,221 @@
+{
+  "id": 6,
+  "panels": [
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "c1e77972-fdd5-4aec-bf2b-2a196c4805cf"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT count(*) AS value FROM scan_results WHERE $__timeFilter(time)",
+          "refId": "A"
+        }
+      ],
+      "title": "Total scans (selected range)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "c1e77972-fdd5-4aec-bf2b-2a196c4805cf"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT count(DISTINCT host) AS value FROM scan_results WHERE $__timeFilter(time)",
+          "refId": "A"
+        }
+      ],
+      "title": "Unique hosts scanned",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "c1e77972-fdd5-4aec-bf2b-2a196c4805cf"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "id": 3,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT count(*) AS value FROM scan_results WHERE type='port' AND status='open' AND $__timeFilter(time)",
+          "refId": "A"
+        }
+      ],
+      "title": "Open ports found",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "c1e77972-fdd5-4aec-bf2b-2a196c4805cf"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
+      "id": 4,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT count(*) AS value FROM scan_results WHERE type='tls' AND status!='valid' AND $__timeFilter(time)",
+          "refId": "A"
+        }
+      ],
+      "title": "Invalid TLS",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "c1e77972-fdd5-4aec-bf2b-2a196c4805cf"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 4
+      },
+      "id": 5,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT time_bucket('1h', time) AS time, scanner, count(*) AS value FROM scan_results WHERE $__timeFilter(time) GROUP BY time, scanner ORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "Scans over time by scanner",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "c1e77972-fdd5-4aec-bf2b-2a196c4805cf"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 4
+      },
+      "id": 6,
+      "options": {
+        "displayLabels": [
+          "name",
+          "percent"
+        ],
+        "pieType": "donut"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT type AS name, count(*) AS value FROM scan_results WHERE $__timeFilter(time) GROUP BY type ORDER BY value DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Results by type",
+      "type": "piechart"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "c1e77972-fdd5-4aec-bf2b-2a196c4805cf"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "id": 7,
+      "options": {
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "time"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT time, host, port, status, type, scanner FROM scan_results WHERE $__timeFilter(time) ORDER BY time DESC LIMIT 50",
+          "refId": "A"
+        }
+      ],
+      "title": "Latest 50 scan results",
+      "type": "table"
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 38,
+  "tags": [
+    "samma",
+    "security"
+  ],
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Samma \u2014 Security Overview",
+  "uid": "samma-overview",
+  "version": 1
+}

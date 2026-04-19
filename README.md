@@ -471,6 +471,49 @@ kubectl delete namespace samma-io   # removes all data
 
 ---
 
+## Grafana dashboards
+
+Scan results stored in TimescaleDB can be visualized in Grafana. The `grafana/` directory contains a setup script and pre-built dashboard JSON files.
+
+### Dashboards
+
+| Dashboard | File | Contents |
+|---|---|---|
+| **Samma — Security Overview** | `grafana/dashboard-overview.json` | Total scans, scans over time by scanner, results by type, latest results table |
+| **Samma — Open Ports & Network** | `grafana/dashboard-ports.json` | Open ports by host, most common ports, SSH banner and traceroute findings |
+| **Samma — Web & TLS** | `grafana/dashboard-web-tls.json` | TLS validity per host, HTTP redirect status, HTTP headers, DNS results |
+
+### Setup
+
+The script pushes a PostgreSQL datasource (pointing at TimescaleDB) and all three dashboards into an existing Grafana via the HTTP API. It is idempotent — safe to re-run.
+
+**Port-forward Grafana and run:**
+
+```bash
+kubectl port-forward -n <grafana-namespace> svc/grafana 3000:80
+
+GRAFANA_URL=http://localhost:3000 \
+GRAFANA_USER=admin \
+GRAFANA_PASSWORD=<password> \
+python grafana/setup_grafana.py
+```
+
+TimescaleDB is reachable cluster-wide at `timescaledb.samma-io.svc.cluster.local:5432`, so the datasource works from any namespace. Override the connection with env vars if needed:
+
+```bash
+TSDB_HOST=timescaledb.samma-io.svc.cluster.local \
+TSDB_PORT=5432 \
+TSDB_DB=samma \
+TSDB_USER=samma \
+TSDB_PASSWORD=samma \
+```
+
+### Import dashboards manually
+
+To import a dashboard through the Grafana UI instead of using the script: **Dashboards → Import → Upload JSON file** and select one of the `grafana/dashboard-*.json` files. Set the datasource to your TimescaleDB/PostgreSQL datasource when prompted.
+
+---
+
 ## Build & push images
 
 ```bash
