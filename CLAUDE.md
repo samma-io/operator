@@ -24,7 +24,7 @@ The operator also watches Ingress resources: if an Ingress has `samma-io.alpha.k
 
 Two scanner families — both follow the same single-container, no-sidecar pattern with NATS env vars injected via the `{% for user in ENV %}` loop:
 
-**detect** (`port-scanner/`, `dns-scanner/`, `http-headers-scanner/`, `tls-scanner/`) — use `ghcr.io/samma-io/detect-*:latest` images; publish results directly to NATS.
+**detect** (`port-scanner/`, `dns-scanner/`, `http-headers-scanner/`, `tls-scanner/`, `http-redirect-scanner/`, `traceroute-scanner/`, `ssh-banner-scanner/`, `whois-scanner/`) — use `ghcr.io/samma-io/detect-*:latest` images; publish results directly to NATS.
 
 **classic** (`nikto/`, `nmap/`, `tsunami/`) — use `sammascanner/*` images; NATS vars passed through ENV. nmap has three sub-templates (`port`, `http`, `tls`) with different `command` entrypoints. tsunami uses `SCANNERFirst` Jinja2 conditional to switch between `--ip-v4-target` and `--hostname-target` args.
 
@@ -41,13 +41,14 @@ Stored in the `scanner-profiles` ConfigMap in `samma-io`. Defined in `initOperat
 
 | Profile | Value |
 |---|---|
-| `detect` | `port-scanner,dns-scanner,http-headers-scanner,tls-scanner` |
+| `default` | All 12 detect + classic scanners (no tsunami) |
+| `web` | `http-headers-scanner,http-redirect-scanner,tls-scanner,nikto,nmap/http` |
+| `network` | `port-scanner,traceroute-scanner,ssh-banner-scanner,nmap/port,nmap/tls` |
+| `dns` | `dns-scanner,whois-scanner` |
+| `detect` | All 8 detect scanners (port, dns, http-headers, tls, http-redirect, traceroute, ssh-banner, whois) |
 | `classic` | `nikto,nmap/port,nmap/http,nmap/tls,tsunami` |
-| `all` | detect + classic combined |
-| `default` | `nmap,nikto` |
-| `web` | `nikto,nmap/http` |
-| `network` | `nmap/port,nmap/tls` |
-| `full` | `nmap,nikto,tsunami,base` |
+| `all` | All 12 scanners + tsunami |
+| `full` | `nmap,nikto,tsunami,base` (legacy) |
 
 ### API (`api/`)
 Flask app (`api/code/app.py`) providing REST interface and web UI.

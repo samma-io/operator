@@ -41,18 +41,22 @@ There are two scanner families:
 
 | Scanner | Image |
 |---|---|
-| port-scanner | `ghcr.io/samma-io/detect-port-scanner:latest` |
-| dns-scanner | `ghcr.io/samma-io/detect-dns-scanner:latest` |
-| http-headers-scanner | `ghcr.io/samma-io/detect-http-headers-scanner:latest` |
-| tls-scanner | `ghcr.io/samma-io/detect-tls-scanner:latest` |
+| `port-scanner` | `ghcr.io/samma-io/detect-port-scanner:latest` |
+| `dns-scanner` | `ghcr.io/samma-io/detect-dns-scanner:latest` |
+| `http-headers-scanner` | `ghcr.io/samma-io/detect-http-headers-scanner:latest` |
+| `tls-scanner` | `ghcr.io/samma-io/detect-tls-scanner:latest` |
+| `http-redirect-scanner` | `ghcr.io/samma-io/detect-http-redirect-scanner:latest` |
+| `traceroute-scanner` | `ghcr.io/samma-io/detect-traceroute-scanner:latest` |
+| `ssh-banner-scanner` | `ghcr.io/samma-io/detect-ssh-banner-scanner:latest` |
+| `whois-scanner` | `ghcr.io/samma-io/detect-whois-scanner:latest` |
 
 **classic** — Traditional scanners (`sammascanner/*`). Single container, NATS vars passed through env.
 
 | Scanner | Image | Templates |
 |---|---|---|
-| nikto | `sammascanner/nikto:v0.2` | — |
-| nmap | `sammascanner/nmap:v0.2` | port, http, tls |
-| tsunami | `sammascanner/tsunami:v0.1` | — |
+| `nikto` | `sammascanner/nikto:v0.2` | — |
+| `nmap` | `sammascanner/nmap:v0.2` | `port`, `http`, `tls` |
+| `tsunami` | `sammascanner/tsunami:v0.1` | — |
 
 ---
 
@@ -114,7 +118,7 @@ spec:
               service:
                 name: api
                 port:
-                  number: 80
+                  number: 8080
 ```
 
 ---
@@ -125,14 +129,14 @@ Profiles are stored in the `scanner-profiles` ConfigMap in the `samma-io` namesp
 
 | Profile | Scanners | Use when |
 |---|---|---|
-| `default` | web + network + dns (all 12 scanners) | Full scan of a new target |
+| `default` | All 12 detect + classic scanners (no tsunami) | Full scan of a new target |
 | `web` | http-headers, http-redirect, tls, nikto, nmap/http | Web application targets |
 | `network` | port, traceroute, ssh-banner, nmap/port, nmap/tls | Infrastructure / server targets |
 | `dns` | dns-scanner, whois-scanner | Domain intelligence only |
 | `detect` | All 8 modern detect scanners | NATS-native lightweight scan |
 | `classic` | nikto, nmap (port/http/tls), tsunami | Traditional deep scan |
 | `all` | All 12 scanners + tsunami | Maximum coverage |
-| `full` | nmap, nikto, tsunami, base | Legacy full scan (filebeat) |
+| `full` | nmap, nikto, tsunami, base | Legacy full scan |
 
 Customise profiles by patching the ConfigMap:
 
@@ -152,6 +156,14 @@ For local access, port-forward first:
 kubectl port-forward svc/api 8080:8080 -n samma-io
 ```
 
+Or use the test scripts in `api/test/`:
+```bash
+export API_URL=http://localhost:8080
+./api/test/add_target.sh
+./api/test/list_targets.sh
+./api/test/del_target.sh
+```
+
 ---
 
 ### Targets
@@ -168,7 +180,7 @@ PUT /target
 
 Minimal request:
 ```bash
-curl -X PUT http://api.samma-io.svc:8080/target \
+curl -X PUT http://localhost:8080/target \
   -H 'Content-Type: application/json' \
   -d '{
     "target": "www.example.com",
@@ -178,7 +190,7 @@ curl -X PUT http://api.samma-io.svc:8080/target \
 
 Full request with all options:
 ```bash
-curl -X PUT http://api.samma-io.svc:8080/target \
+curl -X PUT http://localhost:8080/target \
   -H 'Content-Type: application/json' \
   -d '{
     "target": "www.example.com",
@@ -227,7 +239,7 @@ GET /target
 ```
 
 ```bash
-curl http://api.samma-io.svc:8080/target
+curl http://localhost:8080/target
 ```
 
 Response:
@@ -256,7 +268,7 @@ DELETE /target
 ```
 
 ```bash
-curl -X DELETE http://api.samma-io.svc:8080/target \
+curl -X DELETE http://localhost:8080/target \
   -H 'Content-Type: application/json' \
   -d '{"target": "www.example.com"}'
 ```
@@ -283,7 +295,7 @@ GET /scanner
 ```
 
 ```bash
-curl http://api.samma-io.svc:8080/scanner
+curl http://localhost:8080/scanner
 ```
 
 Returns all Scanner CRDs in the `samma-io` namespace as JSON.
@@ -295,7 +307,7 @@ PUT /scanner
 ```
 
 ```bash
-curl -X PUT http://api.samma-io.svc:8080/scanner \
+curl -X PUT http://localhost:8080/scanner \
   -H 'Content-Type: application/json' \
   -d '{
     "target": "www.example.com",
@@ -312,7 +324,7 @@ DELETE /scanner
 ```
 
 ```bash
-curl -X DELETE http://api.samma-io.svc:8080/scanner \
+curl -X DELETE http://localhost:8080/scanner \
   -H 'Content-Type: application/json' \
   -d '{"name": "nmap-www-example-com"}'
 ```
@@ -458,6 +470,20 @@ kubectl delete namespace samma-io   # removes all data
 | `nodeSelector` | `kubernetes.io/arch: amd64` | Node selector for all pods |
 
 ---
+
+## Build & push images
+
+```bash
+# Operator
+docker build --platform linux/amd64 -t mattiashem/samma-operator:latest ./operator/
+docker push mattiashem/samma-operator:latest
+kubectl rollout restart deployment/samma-operator -n samma-io
+
+# API
+docker build --platform linux/amd64 -t sammascanner/api:latest ./api/
+docker push sammascanner/api:latest
+kubectl rollout restart deployment/samma-api -n samma-io
+```
 
 ## Build & Development
 
