@@ -3,6 +3,9 @@ kind: Job
 metadata:
   name: {{ NAME }}-base
 spec:
+  #Operator-created Jobs have no ownerReference, so nothing else ever
+  #removes them. Without this they accumulate forever.
+  ttlSecondsAfterFinished: 86400
   template:
     spec:
       containers:
