@@ -44,39 +44,47 @@ def deployCron(scanner,target="samma.io",sceduler="15 0 * * * ",env_data={},temp
             if templates is not None and template_name not in templates:
                 continue
             logging.debug(filename)
-            haveDeployd=False
+            #Render first: the CronJob's real name lives in the rendered template.
+            #Templates are inconsistent -- some are "{{ NAME }}", others append a
+            #suffix ("{{ NAME }}-port") -- so it cannot be derived from the scanner
+            #and target alone.
+            f = open("/code/scanners/{0}/cron/{1}".format(scanner,filename), "r")
+            t = Template(f.read())
+            f.close()
+            SCANNERFirst="string"
             try:
-                pods = cronApi.list_namespaced_cron_job("samma-io")
-                for pod in pods.items:
-                    logging.info("Looping over pods")
-                    if pod.metadata.name == "{0}-{1}".format(scanner,targetName):
-                        haveDeployd= True
-            except:
-                logging.info("Error Cant find CronJob to deploy")
+                SCANNERFirst=int(target[0])
+            except ValueError:
+                pass
+            safe_env = {k: str(v).replace('"', '\\"') for k, v in env_data.items()}
+            toDeployYaml = t.render(NAME="{0}-{1}".format(scanner,targetName),TARGET=target,SCHEDULER=sceduler,ENV=safe_env,SCANNERFirst=SCANNERFirst)
+            logging.debug(toDeployYaml)
+            toDeploy = yaml.load(toDeployYaml, Loader=Loader)
+
+            cronName = toDeploy.get("metadata", {}).get("name")
+            if cronName is None:
+                logging.error("Template {0}/{1} has no metadata.name; skipping".format(scanner,filename))
+                continue
+
+            #Look the CronJob up by name rather than listing the namespace. The old
+            #list_namespaced_cron_job() call pulled and deserialised every CronJob
+            #on every pass; a read by name is O(1). The bare `except` around it also
+            #swallowed real API errors and then fell through to create, producing 409s.
+            haveDeployd = True
+            try:
+                cronApi.read_namespaced_cron_job(name=cronName, namespace="samma-io")
+            except ApiException as e:
+                if e.status != 404:
+                    raise
+                haveDeployd = False
 
             if not haveDeployd:
-                    logging.info("Deploying")
-                    #Open the yaml file
-
-                    f = open("/code/scanners/{0}/cron/{1}".format(scanner,filename), "r")
-                    #Add values to
-                    t = Template(f.read())
-                    SCANNERFirst="string"
-                    try:
-                        SCANNERFirst=int(target[0])
-                        logging.info("########################")
-                        logging.info(SCANNERFirst)
-                    except ValueError:
-                        logging.info("########################")
-                        logging.info(SCANNERFirst)
-                    safe_env = {k: str(v).replace('"', '\\"') for k, v in env_data.items()}
-                    toDeployYaml = t.render(NAME="{0}-{1}".format(scanner,targetName),TARGET=target,SCHEDULER=sceduler,ENV=safe_env,SCANNERFirst=SCANNERFirst)
-                    logging.debug(toDeployYaml)
-                    #Make to json
-                    toDeploy = yaml.load(toDeployYaml, Loader=Loader)
+                    logging.info("Deploying CronJob {0}".format(cronName))
                     try:
                         obj = cronApi.create_namespaced_cron_job("samma-io", toDeploy) 
                     except ApiException as e:
                         logging.info("Exception Cannot create cron job %s\n" % e)
+            else:
+                    logging.debug("CronJob {0} already exists; nothing to do".format(cronName))
     else:
         logging.info("The scanner {0} is not in our scanner repo ").format(scanner)    

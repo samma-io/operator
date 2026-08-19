@@ -43,37 +43,48 @@ def deployJob(scanner,target="samma.io",env_data={},templates=None):
             template_name = filename.split(".")[0]
             if templates is not None and template_name not in templates:
                 continue
-            print(filename)
-            haveDeployd=False
-            pods = batch1api.list_namespaced_job("samma-io")
-            for pod in pods.items:
-                logging.info("Looping over pods")
-                if pod.metadata.name == "{0}-{1}".format(scanner,targetName):
-                    haveDeployd= True
+            logging.debug(filename)
+            #Render first: the Job's real name lives in the rendered template.
+            #Templates are inconsistent -- some are "{{ NAME }}", others append a
+            #suffix ("{{ NAME }}-port") -- so the name cannot be derived from the
+            #scanner and target alone.
+            f = open("/code/scanners/{0}/job/{1}".format(scanner,filename), "r")
+            t = Template(f.read())
+            f.close()
+            SCANNERFirst="string"
+            try:
+                SCANNERFirst=int(target[0])
+            except ValueError:
+                pass
+            safe_env = {k: str(v).replace('"', '\\"') for k, v in env_data.items()}
+            toDeployYaml = t.render(NAME="{0}-{1}".format(scanner,targetName),TARGET=target,ENV=safe_env,SCANNERFirst=SCANNERFirst)
+            logging.debug(toDeployYaml)
+            toDeploy = yaml.load(toDeployYaml, Loader=Loader)
+
+            jobName = toDeploy.get("metadata", {}).get("name")
+            if jobName is None:
+                logging.error("Template {0}/{1} has no metadata.name; skipping".format(scanner,filename))
+                continue
+
+            #Look the Job up by name. list_namespaced_job() used to be called here,
+            #inside this loop: it pulls every Job in the namespace and deserialises
+            #it, so memory grew with the number of accumulated Jobs until the pod
+            #was OOMKilled. A read by name is O(1) and does not grow.
+            haveDeployd = True
+            try:
+                batch1api.read_namespaced_job(name=jobName, namespace="samma-io")
+            except ApiException as e:
+                if e.status != 404:
+                    raise
+                haveDeployd = False
 
             if not haveDeployd:
-                    logging.info("Deploying Scanner")
-                    #Open the yaml file         
-                    f = open("/code/scanners/{0}/job/{1}".format(scanner,filename), "r")
-                    #Add values to 
-                    t = Template(f.read())
-                    SCANNERFirst="string"
-                    logging.info(target[0])
-                    try:
-                        SCANNERFirst=int(target[0])
-                        logging.info("########################")
-                        logging.info(SCANNERFirst)
-                    except ValueError:
-                        logging.info("########################")
-                        logging.info(SCANNERFirst)
-                    safe_env = {k: str(v).replace('"', '\\"') for k, v in env_data.items()}
-                    toDeployYaml = t.render(NAME="{0}-{1}".format(scanner,targetName),TARGET=target,ENV=safe_env,SCANNERFirst=SCANNERFirst)
-                    logging.debug(toDeployYaml)
-                    #Make to json
-                    toDeploy = yaml.load(toDeployYaml, Loader=Loader)
+                    logging.info("Deploying Scanner job {0}".format(jobName))
                     try:
                         obj = batch1api.create_namespaced_job("samma-io", toDeploy) 
                     except ApiException as e:
                         logging.info("Exception cannot create job %s\n" % e)
+            else:
+                    logging.debug("Job {0} already exists; nothing to do".format(jobName))
     else:
         logging.info("The scanner {0} is not in our scanner repo ").format(scanner)
