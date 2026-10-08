@@ -4,14 +4,34 @@
 
 ## Overview
 
-Samma is a Kubernetes operator that automatically deploys security scanners as Jobs and CronJobs into your cluster. When a scan target is registered, the operator immediately runs a one-time Job and schedules a weekly CronJob. Results are published to NATS and stored in TimescaleDB.
+Samma is a Kubernetes operator that deploys open-source security scanners into your cluster. When
+a scan target is registered, the operator immediately runs a one-time Job and schedules a weekly
+CronJob. Results are published to NATS and stored in TimescaleDB, and you read them in Grafana.
 
 The system has two components:
 
-- **Operator** — watches `Scanner` CRDs and Ingress resources, deploys scanner Jobs and CronJobs
-- **API** — REST interface for managing scan targets and scanners
+- **Operator**: watches `Scanner` CRDs and Ingress resources, and deploys scanner Jobs and CronJobs.
+- **API**: a REST interface for managing scan targets and scanners.
 
-To see all available scanners, go to [Samma.io](https://samma.io).
+### What you get
+
+- **Scanners that follow your Ingresses.** Annotate an Ingress and the operator scans every host in
+  it from inside the cluster: TLS, security headers, open ports and OWASP-style web findings.
+  Delete the Ingress and its scanners are removed.
+- **External scanners from samma.io.** [Connect the operator to samma.io](#connect-to-sammaio) and
+  your Ingress hosts are shared with the portal. samma.io adds external scanners, which give you an
+  outside-in security baseline.
+- **Vendor and compliance scanners.** Tag an Ingress with `compliance: pci-dss` and samma.io runs a
+  validated vendor scanner, such as a PCI DSS ASV, against that endpoint. Use different vendors for
+  different targets.
+- **Results in your own Grafana.** In-cluster, external and vendor findings all land in
+  [Grafana inside your cluster](#grafana-dashboards), per target.
+- **Controlled from git.** Scanning is set by Ingress annotations, so it is versioned and reviewed
+  with your manifests.
+
+Each endpoint gets the scanners it needs, and nothing keeps scanning, or costing money, once a target is
+gone. The [Samma guide](https://github.com/samma-io/guide/blob/main/1a-the-scanners/README.md)
+describes every scanner and what to use it for.
 
 ---
 
@@ -103,10 +123,10 @@ metadata:
   namespace: samma-io
   annotations:
     samma-io.alpha.kubernetes.io/enable: "true"
-    samma-io.alpha.kubernetes.io/profile: "detect"
+    samma-io.alpha.kubernetes.io/profile: "web"
     samma-io.alpha.kubernetes.io/scheduler: "0 2 * * *"
-    samma-io.alpha.kubernetes.io/samma_io_id: "12345"
     samma-io.alpha.kubernetes.io/samma_io_tags: "scanner,prod"
+    samma-io.alpha.kubernetes.io/compliance: "pci-dss"
 spec:
   rules:
     - host: api.example.com
@@ -120,6 +140,59 @@ spec:
                 port:
                   number: 8080
 ```
+
+| Annotation (`samma-io.alpha.kubernetes.io/…`) | What it does |
+|---|---|
+| `enable` | Turns scanning on. Any value counts, even `"false"`, so remove the annotation to turn it off. |
+| `profile` | Comma-separated [profiles](#scanner-profiles). Takes priority over `scanners`. |
+| `scanners` | An explicit scanner list, used when there is no `profile`. |
+| `scheduler` | Cron expression for the repeat scan. The default is weekly. |
+| `samma_io_id` | Id added to every finding. |
+| `samma_io_tags` | Comma-separated tags added to every finding. |
+| `samma_io_json` | Extra JSON added to every finding. |
+| `compliance` | Compliance tags, e.g. `pci-dss`. samma.io runs the matching validated vendor scanner. Needs the [samma.io connection](#connect-to-sammaio). |
+
+Without `profile` or `scanners`, the `default` profile is used.
+
+#### Lifecycle
+
+- **Ingress created:** one `Scanner` per scanner and host, named
+  `<scanner>-<host-with-dashes>[-<template>]` in `samma-io`. Each one runs a Job now and a CronJob on
+  its schedule.
+- **Ingress deleted:** those Scanners are removed, and samma.io stops its external and vendor scans
+  for the host. Known issue: the Jobs and CronJobs of the **detect** scanners are currently left
+  behind. Remove them by hand with
+  `kubectl -n samma-io get cronjobs,jobs -o name | grep <host-with-dashes> | xargs kubectl -n samma-io delete`.
+- **Annotations changed:** they are read when the Ingress is created. Recreate the Ingress
+  (`kubectl replace --force -f ingress.yaml`) to apply new annotations.
+
+Keep the annotations in git with the rest of the Ingress. Your scanning setup is then reviewed and
+versioned, and ArgoCD or Flux applies it.
+
+---
+
+## Connect to samma.io
+
+Give the operator a samma.io API token (create one under **Dashboard → Tokens**):
+
+```bash
+helm upgrade samma-operator helm/samma-operator --reuse-values \
+  --set config.apiUrl=https://www.samma.io \
+  --set config.apiToken=<token> \
+  --set config.profileId=<profile id, optional>
+```
+
+Once it has a token:
+
+- every host from an annotated Ingress is registered as a target in your samma.io organisation;
+- samma.io adds **external scanners** to that target, for an outside-in baseline;
+- Ingresses tagged with `compliance` get the matching **validated vendor scanner**, such as a PCI
+  DSS ASV. Vendors are connected on the samma.io side, so the cluster needs no vendor accounts;
+- results come back to the same targets, so they show up in your Grafana and the samma.io
+  dashboard.
+
+These map to the `SAMMA_IO_API_URL`, `SAMMA_IO_API_TOKEN` and `SAMMA_IO_PROFILE_ID`
+[environment variables](#environment-variables).
 
 ---
 
@@ -473,7 +546,9 @@ kubectl delete namespace samma-io   # removes all data
 
 ## Grafana dashboards
 
-Scan results stored in TimescaleDB can be visualized in Grafana. The `grafana/` directory contains a setup script and pre-built dashboard JSON files.
+All findings for all your targets end up in TimescaleDB in your cluster, and Grafana is where you
+read them. The operator chart does not install Grafana: use the one you already run, or install
+one, and point it at TimescaleDB. The `grafana/` directory contains a setup script and pre-built dashboard JSON files.
 
 ### Dashboards
 
