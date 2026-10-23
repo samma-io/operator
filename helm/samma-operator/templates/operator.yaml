@@ -46,6 +46,10 @@ spec:
               value: {{ .Values.config.apiToken | quote }}
             - name: SAMMA_IO_PROFILE_ID
               value: {{ .Values.config.profileId | quote }}
+            - name: SAMMA_ALLOW_PRIVATE_TARGETS
+              value: {{ .Values.config.allowPrivateTargets | quote }}
+            - name: SAMMA_ALLOW_UNMANAGED_TARGETS
+              value: {{ .Values.config.allowUnmanagedTargets | quote }}
           resources:
             {{- toYaml .Values.operator.resources | nindent 12 }}
 ---

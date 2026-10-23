@@ -87,3 +87,8 @@ config:
   apiUrl: "https://www.samma.io"
   apiToken: ""
   profileId: ""
+  # Target validation (README, "Target validation").
+  # "true" lets a Scanner target a private, loopback or link-local address.
+  allowPrivateTargets: "false"
+  # "false" refuses a Scanner whose target is not an Ingress host in the cluster.
+  allowUnmanagedTargets: "true"
