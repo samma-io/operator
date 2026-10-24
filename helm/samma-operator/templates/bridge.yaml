@@ -19,7 +19,7 @@ spec:
       {{- end }}
       containers:
         - name: samma-bridge
-          image: {{ .Values.bridge.image }}:{{ .Values.bridge.tag }}
+          image: {{ .Values.bridge.image }}:{{ .Values.bridge.tag }}{{- if .Values.bridge.digest }}@{{ .Values.bridge.digest }}{{- end }}
           imagePullPolicy: {{ .Values.bridge.pullPolicy }}
           env:
             - name: NATS_URL

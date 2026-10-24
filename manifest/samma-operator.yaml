@@ -94,7 +94,7 @@ spec:
         kubernetes.io/arch: amd64
       containers:
         - name: samma-operator
-          image: mattiashem/samma-operator:latest
+          image: mattiashem/samma-operator:latest@sha256:a1c718acbef760fb660a8bfec72a722261111e112ccfd57f5475344eca315613
           imagePullPolicy: Always
           ports:
             - name: http
@@ -162,7 +162,7 @@ spec:
         kubernetes.io/arch: amd64
       containers:
         - name: samma-api
-          image: sammascanner/api:latest
+          image: sammascanner/api:latest@sha256:0cb8f1b94292ea30d850c82db0f3dda02999595841d871431f77d3cb90185dfb
           imagePullPolicy: Always
           ports:
             - name: http
@@ -223,7 +223,7 @@ spec:
         kubernetes.io/arch: amd64
       containers:
         - name: nats
-          image: nats:2
+          image: nats:2@sha256:023a08c46caa5aff878fb86841187bebfdad9a6e3c552ba5c1a1e18938bbf88a
           ports:
             - containerPort: 4222
             - containerPort: 8222
@@ -281,7 +281,7 @@ spec:
         kubernetes.io/arch: amd64
       containers:
         - name: timescaledb
-          image: timescale/timescaledb:latest-pg15
+          image: timescale/timescaledb:latest-pg15@sha256:6343bdc87ca132c6b53acb26113a6bad1821d188fa39975a745f32ddd9757634
           env:
             - name: POSTGRES_DB
               value: samma
@@ -340,7 +340,7 @@ spec:
         kubernetes.io/arch: amd64
       containers:
         - name: samma-bridge
-          image: sammascanner/bridge:latest
+          image: sammascanner/bridge:latest@sha256:043ae17d18926b5d0b57058a6b10d845f73723a6bb17eb65031162501eda42c3
           imagePullPolicy: Always
           env:
             - name: NATS_URL

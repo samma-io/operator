@@ -19,7 +19,7 @@ spec:
       {{- end }}
       containers:
         - name: samma-api
-          image: {{ .Values.api.image }}:{{ .Values.api.tag }}
+          image: {{ .Values.api.image }}:{{ .Values.api.tag }}{{- if .Values.api.digest }}@{{ .Values.api.digest }}{{- end }}
           imagePullPolicy: {{ .Values.api.pullPolicy }}
           ports:
             - name: http

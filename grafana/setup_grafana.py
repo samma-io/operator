@@ -6,13 +6,13 @@ Required env vars:
   GRAFANA_URL       e.g. http://grafana.metrics.svc.cluster.local:3000
   GRAFANA_USER      e.g. admin
   GRAFANA_PASSWORD  e.g. secret
+  TSDB_PASSWORD     e.g. secret
 
 Optional env vars (TimescaleDB connection):
   TSDB_HOST         default: timescaledb.samma-io.svc.cluster.local
   TSDB_PORT         default: 5432
   TSDB_DB           default: samma
   TSDB_USER         default: samma
-  TSDB_PASSWORD     default: samma
 """
 
 import json
@@ -23,14 +23,14 @@ import urllib.error
 import base64
 
 GRAFANA_URL = os.environ.get("GRAFANA_URL", "").rstrip("/")
-GRAFANA_USER = os.environ.get("GRAFANA_USER", "admin")
+GRAFANA_USER = os.environ.get("GRAFANA_USER", "")
 GRAFANA_PASSWORD = os.environ.get("GRAFANA_PASSWORD", "")
 
 TSDB_HOST = os.environ.get("TSDB_HOST", "timescaledb.samma-io.svc.cluster.local")
 TSDB_PORT = os.environ.get("TSDB_PORT", "5432")
 TSDB_DB = os.environ.get("TSDB_DB", "samma")
 TSDB_USER = os.environ.get("TSDB_USER", "samma")
-TSDB_PASSWORD = os.environ.get("TSDB_PASSWORD", "samma")
+TSDB_PASSWORD = os.environ.get("TSDB_PASSWORD", "")
 
 DATASOURCE_NAME = "TimescaleDB-Samma"
 
@@ -267,8 +267,14 @@ def main():
     if not GRAFANA_URL:
         print("ERROR: GRAFANA_URL is not set.", file=sys.stderr)
         sys.exit(1)
+    if not GRAFANA_USER:
+        print("ERROR: GRAFANA_USER is not set.", file=sys.stderr)
+        sys.exit(1)
     if not GRAFANA_PASSWORD:
         print("ERROR: GRAFANA_PASSWORD is not set.", file=sys.stderr)
+        sys.exit(1)
+    if not TSDB_PASSWORD:
+        print("ERROR: TSDB_PASSWORD is not set.", file=sys.stderr)
         sys.exit(1)
 
     print(f"Grafana: {GRAFANA_URL}")

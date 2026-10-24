@@ -562,14 +562,22 @@ one, and point it at TimescaleDB. The `grafana/` directory contains a setup scri
 
 The script pushes a PostgreSQL datasource (pointing at TimescaleDB) and all three dashboards into an existing Grafana via the HTTP API. It is idempotent — safe to re-run.
 
+`GRAFANA_USER` and `TSDB_PASSWORD` are required — there are no default credentials, and the script exits with an error if any of them is unset. Generate passwords with `openssl rand -base64 24`, or read the Grafana admin password from the Grafana admin secret:
+
+```bash
+GRAFANA_PASSWORD=$(kubectl get secret -n <grafana-namespace> <grafana-admin-secret> \
+  -o jsonpath='{.data.admin-password}' | base64 -d)
+```
+
 **Port-forward Grafana and run:**
 
 ```bash
 kubectl port-forward -n <grafana-namespace> svc/grafana 3000:80
 
 GRAFANA_URL=http://localhost:3000 \
-GRAFANA_USER=admin \
-GRAFANA_PASSWORD=<password> \
+GRAFANA_USER=<grafana-admin-user> \
+GRAFANA_PASSWORD=<grafana-admin-password> \
+TSDB_PASSWORD=<timescaledb-password> \
 python grafana/setup_grafana.py
 ```
 
@@ -580,7 +588,7 @@ TSDB_HOST=timescaledb.samma-io.svc.cluster.local \
 TSDB_PORT=5432 \
 TSDB_DB=samma \
 TSDB_USER=samma \
-TSDB_PASSWORD=samma \
+TSDB_PASSWORD=<timescaledb-password> \
 ```
 
 ### Import dashboards manually

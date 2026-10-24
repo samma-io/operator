@@ -24,17 +24,30 @@ To import manually: **Grafana → Dashboards → Import → Upload JSON file**. 
 
 ## Usage
 
+The script has no built-in credentials and fails fast if any required variable is unset. Generate
+passwords yourself (`openssl rand -base64 24`) or source them from the Grafana admin secret.
+
 ```bash
+# Generate a strong password when setting one up:
+openssl rand -base64 24
+
+# Or read the Grafana admin password directly from its Kubernetes secret
+# (the Grafana chart stores it under the admin-password key):
+export GRAFANA_PASSWORD=$(kubectl get secret -n <grafana-namespace> <grafana-admin-secret> \
+  -o jsonpath='{.data.admin-password}' | base64 -d)
+
 export GRAFANA_URL=http://<grafana-host>:<port>   # e.g. http://localhost:3000
-export GRAFANA_USER=admin
-export GRAFANA_PASSWORD=<your-grafana-password>
+export GRAFANA_USER=<grafana-admin-user>
+export GRAFANA_PASSWORD=<grafana-admin-password>  # required — no default
+
+# Required — TimescaleDB password; the script exits if unset
+export TSDB_PASSWORD=<timescaledb-password>
 
 # Optional — only needed if different from defaults
 export TSDB_HOST=timescaledb.samma-io.svc.cluster.local
 export TSDB_PORT=5432
 export TSDB_DB=samma
 export TSDB_USER=samma
-export TSDB_PASSWORD=samma
 
 python grafana/setup_grafana.py
 ```
@@ -47,13 +60,19 @@ The script is idempotent — running it again updates existing dashboards and sk
 kubectl run grafana-setup --rm -it --restart=Never \
   --image=python:3.12-slim \
   --env="GRAFANA_URL=http://grafana.metrics.svc.cluster.local:3000" \
-  --env="GRAFANA_USER=admin" \
-  --env="GRAFANA_PASSWORD=<password>" \
+  --env="GRAFANA_USER=<grafana-admin-user>" \
+  --env="GRAFANA_PASSWORD=$(kubectl get secret -n <grafana-namespace> <grafana-admin-secret> \
+      -o jsonpath='{.data.admin-password}' | base64 -d)" \
+  --env="TSDB_PASSWORD=<timescaledb-password>" \
   -- python -c "$(cat grafana/setup_grafana.py)"
 ```
 
 Or port-forward Grafana locally:
 ```bash
 kubectl port-forward -n metrics svc/grafana 3000:3000
-GRAFANA_URL=http://localhost:3000 GRAFANA_USER=admin GRAFANA_PASSWORD=<pw> python grafana/setup_grafana.py
+GRAFANA_URL=http://localhost:3000 \
+GRAFANA_USER=<grafana-admin-user> \
+GRAFANA_PASSWORD=<grafana-admin-password> \
+TSDB_PASSWORD=<timescaledb-password> \
+python grafana/setup_grafana.py
 ```
