@@ -5,9 +5,10 @@ A release is a tag `v<version>` on `main`. Pushing it runs
 `oci://ghcr.io/samma-io/charts/samma-operator` and the images to
 `ghcr.io/samma-io/samma-{operator,api,bridge}` (README, "Releases").
 
-## Unreleased
+## 0.2.2
 
-Found by the first soak of 0.2.1 on a Cilium cluster behind Traefik.
+Found by the first soak of 0.2.1 on a Cilium cluster behind Traefik. Pull
+request samma-io/operator#10.
 
 - The operator touches only the Ingresses that carry
   `samma-io.alpha.kubernetes.io/enable`. The Ingress handlers are filtered
@@ -25,6 +26,17 @@ Found by the first soak of 0.2.1 on a Cilium cluster behind Traefik.
 - The bridge prints the release it belongs to from `SAMMA_VERSION`, which
   the chart sets from `appVersion` (the raw manifest sets it by hand);
   0.2.1 still said 0.2.0.
+
+## 0.2.1
+
+Pull request samma-io/operator#9.
+
+- The operator, bridge, API and NATS pods run as uid 1000 (values
+  `operator.runAsUser`, `bridge.runAsUser`, `api.runAsUser`,
+  `nats.runAsUser`), so the kubelet can verify `runAsNonRoot` and the pods
+  start. 0.2.0 named the user in the images, which Kubernetes refuses with
+  `CreateContainerConfigError`. The images set a numeric `USER` as well, and
+  the API and NATS pods drop every capability like the others.
 
 ## 0.2.0
 
