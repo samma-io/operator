@@ -45,8 +45,8 @@ jobs:
             echo "::error::tag $tag is not v<major>.<minor>.<patch>[-<prerelease>]"
             exit 1
           fi
-          chart_version="$(awk '$1 == "version:" {print $2}' "$CHART/Chart.yaml" | tr -d '"')"
-          app_version="$(awk '$1 == "appVersion:" {print $2}' "$CHART/Chart.yaml" | tr -d '"')"
+          chart_version="$(awk '/^version:/ {print $2}' "$CHART/Chart.yaml" | tr -d '"')"
+          app_version="$(awk '/^appVersion:/ {print $2}' "$CHART/Chart.yaml" | tr -d '"')"
           if [ "$chart_version" != "$version" ] || [ "$app_version" != "$version" ]; then
             echo "::error::$CHART/Chart.yaml has version $chart_version and appVersion $app_version but the tag says $version. Set both to $version first."
             exit 1
