@@ -1,4 +1,5 @@
 from flask import Flask, render_template, request
+import ipaddress
 import re
 import yaml
 import json
@@ -37,6 +38,23 @@ def make_crd_name(scanner, target, template=None):
     if template:
         parts.append(template)
     return '-'.join(parts)[:63]
+
+
+def is_valid_target(value):
+    """Only IP addresses (IPv4/IPv6) or RFC 1123 hostnames are valid targets."""
+    if not isinstance(value, str):
+        return False
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        pass
+    if len(value) > 253:
+        return False
+    return all(
+        re.match(r'^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$', label)
+        for label in value.split('.')
+    )
 
 ## Setup the flask app
 app = Flask(__name__)
@@ -270,6 +288,8 @@ def create_target():
     target = (content.get('target') or '').strip()
     if not target:
         return {"error": "missing required field: target"}, 400
+    if not is_valid_target(target):
+        return {"error": "invalid target: must be an IP address or RFC 1123 hostname"}, 400
 
     profile = content.get('profile', 'default')
     scheduler = content.get('scheduler', '')
