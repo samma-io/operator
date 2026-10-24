@@ -85,6 +85,10 @@ scanners:
   images: {}
   #  nmap: ghcr.io/samma-io/nmap:v0.3
   #  dns-scanner: ghcr.io/samma-io/detect-dns-scanner@sha256:0123abcd...
+  # The legacy base scanner ships its files with a filebeat sidecar that
+  # mounts the filebeat and live ConfigMaps. true creates them at startup;
+  # nothing else uses them, and the detect scanners publish to NATS.
+  legacyBaseScanner: false
   # Requests and limits of every scanner container.
   resources:
     requests:

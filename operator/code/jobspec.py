@@ -82,6 +82,9 @@ ENV_DEFAULT_SCHEDULE = "SAMMA_IO_WEEKLY_SCHEDULE"
 # which is what an unauthenticated NATS needs.
 ENV_NATS_SECRET = "SAMMA_NATS_SECRET"
 ENV_NATS_SCANNER_USER = "SAMMA_NATS_SCANNER_USER"
+# Create the filebeat and live ConfigMaps the legacy base scanner mounts.
+# Off by default: the detect scanners publish to NATS and need neither.
+ENV_LEGACY_BASE_SCANNER = "SAMMA_LEGACY_BASE_SCANNER"
 
 DEFAULT_NAMESPACE = "samma-io"
 DEFAULT_SCANNER_SERVICE_ACCOUNT = "samma-scanner"
@@ -138,6 +141,7 @@ class Settings(object):
         default_schedule=DEFAULT_SCHEDULE,
         nats_secret="",
         nats_scanner_user=DEFAULT_NATS_SCANNER_USER,
+        legacy_base_scanner=False,
     ):
         self.namespace = namespace
         self.scanner_service_account = scanner_service_account
@@ -155,6 +159,7 @@ class Settings(object):
         self.default_schedule = default_schedule
         self.nats_secret = (nats_secret or "").strip()
         self.nats_scanner_user = (nats_scanner_user or "").strip() or DEFAULT_NATS_SCANNER_USER
+        self.legacy_base_scanner = bool(legacy_base_scanner)
 
     @classmethod
     def from_env(cls, environ=None):
@@ -215,6 +220,7 @@ class Settings(object):
             default_schedule=text(ENV_DEFAULT_SCHEDULE, DEFAULT_SCHEDULE),
             nats_secret=text(ENV_NATS_SECRET, ""),
             nats_scanner_user=text(ENV_NATS_SCANNER_USER, DEFAULT_NATS_SCANNER_USER),
+            legacy_base_scanner=flag(ENV_LEGACY_BASE_SCANNER, False),
         )
 
 
@@ -333,9 +339,13 @@ DETECT_SCANNERS = (
 )
 
 # Extra environment per detect scanner. http-headers-scanner judges HSTS
-# only over HTTPS and its image defaults to HTTPS=False.
+# only over HTTPS and its image defaults to HTTPS=False. PORT is set with
+# it: detect up to 2.0.1 let config.yaml's port 80 win over the HTTPS
+# default of 443 when only HTTPS was given, so the scanner spoke TLS to
+# port 80 (fixed in samma-io/detect#9, "Settings precedence"). The other
+# detect scanners run on their image defaults.
 DETECT_ENV = {
-    "http-headers-scanner": {"HTTPS": "True"},
+    "http-headers-scanner": {"HTTPS": "True", "PORT": "443"},
 }
 
 SCANNERS = {}

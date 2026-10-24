@@ -76,6 +76,8 @@ spec:
               value: {{ .Values.scanners.ttlSecondsAfterFinished | quote }}
             - name: SAMMA_NMAP_RAW_SOCKETS
               value: {{ .Values.scanners.nmapRawSockets | quote }}
+            - name: SAMMA_LEGACY_BASE_SCANNER
+              value: {{ .Values.scanners.legacyBaseScanner | quote }}
             - name: SAMMA_SCANNER_RUN_AS_USER
               value: {{ .Values.scanners.runAsUser | quote }}
             - name: SAMMA_SCANNER_IMAGE_PREFIX

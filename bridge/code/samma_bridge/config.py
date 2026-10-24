@@ -18,6 +18,7 @@ class Config(object):
         straggler_wait_seconds=30,
         run_idle_timeout_seconds=3600,
         scanreports_enabled=True,
+        version="dev",
     ):
         self.nats_url = nats_url
         self.nats_subject = (nats_subject or "samma-io.scan").strip().rstrip(".") or "samma-io.scan"
@@ -31,6 +32,9 @@ class Config(object):
         self.straggler_wait_seconds = straggler_wait_seconds
         self.run_idle_timeout_seconds = run_idle_timeout_seconds
         self.scanreports_enabled = scanreports_enabled
+        # The release this bridge is part of: SAMMA_VERSION, set by the chart
+        # from Chart.appVersion (and by the raw manifest); "dev" otherwise.
+        self.version = (version or "").strip() or "dev"
 
     @property
     def subjects(self):
@@ -79,6 +83,7 @@ class Config(object):
             straggler_wait_seconds=number("STRAGGLER_WAIT_SECONDS", 30),
             run_idle_timeout_seconds=number("RUN_IDLE_TIMEOUT_SECONDS", 3600, minimum=60),
             scanreports_enabled=flag("SCANREPORTS_ENABLED", True),
+            version=text("SAMMA_VERSION", "dev"),
         )
 
     def nats_connect_options(self):

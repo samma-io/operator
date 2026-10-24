@@ -183,6 +183,12 @@ other annotations under the prefix are ignored.
   Kubernetes garbage collection, and samma.io stops its external and vendor scans for the host.
   An Ingress in the operator's own namespace also owns its Scanners through `ownerReferences`;
   Kubernetes does not allow an owner in another namespace, which is why the labels exist.
+- **Every other Ingress is left alone.** The handlers match only Ingresses that carry the `enable`
+  annotation, and kopf's own bookkeeping annotation
+  (`kopf.zalando.org/last-handled-configuration`) is stored only on those; it goes away with the
+  Scanners when the annotation is removed. Operators up to 0.2.1 wrote it on every Ingress in the
+  cluster: such a leftover is removed the next time that Ingress changes, or by hand with
+  `kubectl annotate ingress <name> -n <namespace> kopf.zalando.org/last-handled-configuration-`.
 
 Two Ingresses that serve the same host each get their own Scanners; the Jobs and CronJobs for the
 host are shared between them and go away when the last one does.
@@ -296,7 +302,11 @@ it use connect scans; the nmap image has to pass that through (and use `-sT` for
 With `true` the nmap containers get `NET_RAW` and `NMAP_PRIVILEGED=1`, which is today's behaviour.
 Only nmap ever receives the capability.
 
-The legacy `base` scanner keeps its filebeat sidecar; it is the only multi-container scanner.
+The legacy `base` scanner keeps its filebeat sidecar; it is the only multi-container scanner. The
+sidecar mounts the `filebeat` and `live` ConfigMaps, which the operator creates at startup only
+with `scanners.legacyBaseScanner: true` (`SAMMA_LEGACY_BASE_SCANNER`). Nothing else uses them, so
+by default they are not created, and a Scanner that asks for `base` gets a `LegacyScanner` warning
+event instead of a pod that never starts.
 
 ### Concurrency and scheduling
 
@@ -323,7 +333,7 @@ The operator no longer binds to `cluster-admin`. Four ServiceAccounts are create
 
 | ServiceAccount | Rights |
 |---|---|
-| `samma-operator` | ClusterRole: Ingresses get, list, watch, patch (kopf writes its progress as annotations); `scanner.samma.io` full; `scanreports.samma.io` get, list, watch, create, update, patch (it records failed scan Jobs there, see [Scan reports](#scan-reports)); events create, patch; CustomResourceDefinitions list, watch. Role in the namespace: Jobs and CronJobs full; ConfigMaps get, list, watch, create, patch; Secrets get, list; Pods get, list. |
+| `samma-operator` | ClusterRole: Ingresses get, list, watch, patch (kopf keeps its progress and diff base as annotations on the opted-in Ingresses, and only on those); `scanner.samma.io` full; `scanreports.samma.io` get, list, watch, create, update, patch (it records failed scan Jobs there, see [Scan reports](#scan-reports)); events create, patch; CustomResourceDefinitions list, watch. Role in the namespace: Jobs and CronJobs full; ConfigMaps get, list, watch, create, patch; Secrets get, list; Pods get, list. |
 | `samma-api` | Role: `scanner.samma.io` get, list, create, patch, delete; ConfigMaps get, list. |
 | `samma-bridge` | Role: `scanreports.samma.io` get, list, watch, create, update, patch (it writes the reports); `scanner.samma.io` get, list, watch (it drops results for targets no Scanner has). |
 | `samma-scanner` | Nothing. Scanner pods run under it with no token mounted. |
@@ -981,6 +991,12 @@ The release notes say when a CRD changed. Helm 3.17 and newer can also do it in 
 `helm upgrade --take-ownership`, as long as the CRDs are already in the cluster. The raw manifest
 carries the CRDs inline, so `kubectl apply -f samma-operator-<version>.yaml` updates them as part
 of the apply.
+
+**From 0.2.1 or earlier.** Those operators wrote kopf's `kopf.zalando.org/last-handled-configuration`
+annotation on every Ingress in the cluster; newer ones write it on opted-in Ingresses only and remove
+a leftover when that Ingress next changes (see [Lifecycle](#lifecycle) for the one-liner). The
+`filebeat` and `live` ConfigMaps are created only with `scanners.legacyBaseScanner: true` from now
+on; existing ones are left in place.
 
 **From a chart before 0.2.0.** Those charts installed the CRDs as ordinary templates and used a
 default TimescaleDB password. Before upgrading, set `acceptScanningTerms: true` and

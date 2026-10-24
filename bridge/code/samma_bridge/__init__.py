@@ -15,7 +15,6 @@ Python with no third-party import:
     ../bridge.py    the asyncio entry point: NATS, asyncpg and the wiring
 
 bridge/tests exercises the pure modules without nats-py, asyncpg or the
-kubernetes client installed.
+kubernetes client installed. The release version is not kept here: the
+bridge prints SAMMA_VERSION, which the chart sets from Chart.appVersion.
 """
-
-__version__ = "0.2.0"

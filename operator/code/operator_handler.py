@@ -11,6 +11,9 @@ Scanner per scanner and host. Those Scanners carry labels naming the Ingress;
 when the Ingress is in the operator's own namespace they are also owned by
 it. Kubernetes does not allow an owner in another namespace, so for every
 other Ingress the delete and update handlers remove stale Scanners by label.
+Ingresses without the annotation are never touched: the handlers are
+filtered on it and kopf's diff-base annotation is stored only on opted-in
+Ingresses (ingress_optin.py).
 
 Job and CronJob bodies are built in jobspec.py; nothing here renders YAML.
 """
@@ -25,6 +28,7 @@ import yaml
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
+import ingress_optin
 import jobspec
 import scanreport
 import target_policy
@@ -65,8 +69,10 @@ ENV_DEFAULTS = {
 GROUP, VERSION, PLURAL, KIND = 'samma.io', 'v1', 'scanner', 'Scanner'
 API_VERSION = GROUP + '/' + VERSION
 
-ANNOTATION_PREFIX = 'samma-io.alpha.kubernetes.io/'
-ENABLE_ANNOTATION = ANNOTATION_PREFIX + 'enable'
+ANNOTATION_PREFIX = ingress_optin.ANNOTATION_PREFIX
+ENABLE_ANNOTATION = ingress_optin.ENABLE_ANNOTATION
+# The kopf filter on every Ingress handler: only opted-in Ingresses match.
+OPTED_IN = {ENABLE_ANNOTATION: kopf.PRESENT}
 PROFILE_ANNOTATION = ANNOTATION_PREFIX + 'profile'
 SCANNERS_ANNOTATION = ANNOTATION_PREFIX + 'scanners'
 # The only annotation values that are copied into a Scanner's spec. Anything
@@ -103,7 +109,10 @@ merge_custom = client.CustomObjectsApi(_merge_client)
 def init_operator():
     """Create the ConfigMaps the scanners need when they are absent. The
     deployment can override them by creating its own before the operator
-    starts; existing ConfigMaps are never changed."""
+    starts; existing ConfigMaps are never changed. The filebeat and live
+    ConfigMaps exist only for the legacy base scanner's sidecar and are
+    created only with SAMMA_LEGACY_BASE_SCANNER=true; the detect scanners
+    publish to NATS and need neither."""
 
     def have_configmap(name):
         try:
@@ -114,7 +123,10 @@ def init_operator():
                 return False
             raise
 
-    for name, path in (('filebeat', 'scanners/core/config-filebeat.yaml'), ('live', 'scanners/core/config-live.yaml')):
+    legacy = (('filebeat', 'scanners/core/config-filebeat.yaml'), ('live', 'scanners/core/config-live.yaml'))
+    if not SETTINGS.legacy_base_scanner:
+        legacy = ()
+    for name, path in legacy:
         if have_configmap(name):
             continue
         with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), path), 'r') as handle:
@@ -345,6 +357,9 @@ def configure(settings, **_):
     scanning = getattr(settings, 'scanning', None)
     if scanning is not None:
         scanning.disabled = True
+    # kopf writes its diff base onto every watched object, handled or not;
+    # this storage writes it on opted-in Ingresses only (ingress_optin.py).
+    settings.persistence.diffbase_storage = ingress_optin.make_diffbase_storage()
     init_operator()
     _, _drainer_stop = start_drainer(scan_queue, SETTINGS.queue_interval_seconds, on_tick=record_job_outcomes)
     logging.info(
@@ -415,6 +430,10 @@ def validate_scanner(body, retry):
         kopf.warn(body, reason='UnknownScanner', message="Scanner {0!r} is not known to this operator and was skipped".format(name))
     if not runs:
         raise kopf.PermanentError("none of the requested scanners {0} is known".format(scanners))
+    if not SETTINGS.legacy_base_scanner and any(spec.name == 'base' for spec, _ in runs):
+        kopf.warn(body, reason='LegacyScanner',
+                  message="The base scanner mounts the filebeat and live ConfigMaps, which are created only with "
+                          "SAMMA_LEGACY_BASE_SCANNER=true (chart: scanners.legacyBaseScanner); its pod will not start")
     return target, scheduler, runs
 
 
@@ -755,22 +774,39 @@ def delete_scanner(name):
             logging.warning("Could not delete Scanner %s: %s", name, exc.reason)
 
 
-@kopf.on.create('networking.k8s.io', 'v1', 'ingresses')
+# Every handler below is filtered on the enable annotation (OPTED_IN), so an
+# Ingress that never carried it matches none of them; ingress_opted_out
+# catches the one transition the filter cannot see, the annotation going
+# away. Together with the diff-base storage set in configure(), the operator
+# reads other Ingresses but never writes to them.
+
+@kopf.on.create('networking.k8s.io', 'v1', 'ingresses', annotations=OPTED_IN)
 def ingress_create_fn(body, retry, **kwargs):
     reconcile_ingress(body, retry)
 
 
-@kopf.on.update('networking.k8s.io', 'v1', 'ingresses', field='metadata.annotations')
+@kopf.on.update('networking.k8s.io', 'v1', 'ingresses', field='metadata.annotations', annotations=OPTED_IN)
 def ingress_annotations_changed(body, retry, **kwargs):
+    """A changed annotation under the prefix, or enable set to "false":
+    reconcile_ingress then deletes the Scanners."""
     reconcile_ingress(body, retry)
 
 
-@kopf.on.update('networking.k8s.io', 'v1', 'ingresses', field='spec.rules')
+@kopf.on.update('networking.k8s.io', 'v1', 'ingresses', field='spec.rules', annotations=OPTED_IN)
 def ingress_rules_changed(body, retry, **kwargs):
     reconcile_ingress(body, retry)
 
 
-@kopf.on.delete('networking.k8s.io', 'v1', 'ingresses', optional=True)
+@kopf.on.update('networking.k8s.io', 'v1', 'ingresses', field=ingress_optin.ENABLE_FIELD,
+                old=kopf.PRESENT, new=kopf.ABSENT)
+def ingress_opted_out(body, retry, **kwargs):
+    """The enable annotation was removed: the Ingress no longer matches the
+    filtered handlers, so this one removes its Scanners (ingress_enabled is
+    false without the annotation, and reconcile_ingress wants none)."""
+    reconcile_ingress(body, retry)
+
+
+@kopf.on.delete('networking.k8s.io', 'v1', 'ingresses', optional=True, annotations=OPTED_IN)
 def ingress_delete(body, **kwargs):
     """Remove the Scanners this Ingress created, by label. Scanners in the
     operator's namespace are also garbage collected through their owner

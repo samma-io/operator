@@ -63,6 +63,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(s.image_overrides, {})
         self.assertEqual(s.resources, jobspec.DEFAULT_RESOURCES)
         self.assertEqual(s.default_schedule, "0 0 * * 0")
+        self.assertFalse(s.legacy_base_scanner)
 
     def test_values_from_environment(self):
         s = jobspec.Settings.from_env({
@@ -79,6 +80,7 @@ class SettingsTests(unittest.TestCase):
             "SAMMA_SCANNER_IMAGE_HTTP_HEADERS_SCANNER": "registry.example/hh:v9",
             "SAMMA_SCANNER_CPU_LIMIT": "2",
             "SAMMA_IO_WEEKLY_SCHEDULE": "0 3 * * 1",
+            "SAMMA_LEGACY_BASE_SCANNER": "true",
         })
         self.assertEqual(s.namespace, "scans")
         self.assertEqual(s.max_concurrent_scans, 5)
@@ -93,6 +95,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(s.resources["limits"]["cpu"], "2")
         self.assertEqual(s.resources["requests"]["cpu"], "100m")
         self.assertEqual(s.default_schedule, "0 3 * * 1")
+        self.assertTrue(s.legacy_base_scanner)
 
     def test_bad_numbers_and_words_fall_back(self):
         s = jobspec.Settings.from_env({
@@ -309,6 +312,16 @@ class BuildJobTests(unittest.TestCase):
         self.assertEqual(env_dict(container)["SAMMA_IO_ID"], "12345")
         self.assertNotIn("command", container)
         self.assertNotIn("args", container)
+
+    def test_http_headers_scanner_gets_https_and_its_port(self):
+        # detect up to 2.0.1 let config.yaml's port 80 beat the HTTPS default
+        # when only HTTPS was set, so the port is passed along with it.
+        spec, variant = run("http-headers-scanner")
+        job = jobspec.build_job(spec, variant, "www.example.com", ENV, self.settings, owner=OWNER)
+        env = env_dict(container_of(job))
+        self.assertEqual((env["HTTPS"], env["PORT"]), ("True", "443"))
+        self.assertEqual(jobspec.DETECT_ENV, {"http-headers-scanner": {"HTTPS": "True", "PORT": "443"}},
+                         "every other detect scanner runs on its image defaults")
 
     def test_settings_reach_the_job(self):
         s = settings(namespace="scans", scanner_service_account="runner", scan_deadline_seconds=60, ttl_seconds_after_finished=10, run_as_user=4242, image_pull_policy="IfNotPresent",

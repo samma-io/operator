@@ -5,6 +5,27 @@ A release is a tag `v<version>` on `main`. Pushing it runs
 `oci://ghcr.io/samma-io/charts/samma-operator` and the images to
 `ghcr.io/samma-io/samma-{operator,api,bridge}` (README, "Releases").
 
+## Unreleased
+
+Found by the first soak of 0.2.1 on a Cilium cluster behind Traefik.
+
+- The operator touches only the Ingresses that carry
+  `samma-io.alpha.kubernetes.io/enable`. The Ingress handlers are filtered
+  on the annotation, and kopf's diff-base annotation
+  (`kopf.zalando.org/last-handled-configuration`) is stored on those
+  Ingresses only; 0.2.x wrote it on every Ingress in the cluster. A
+  leftover is removed the next time such an Ingress changes.
+- `http-headers-scanner` Jobs get `PORT=443` next to `HTTPS=True`. detect up
+  to 2.0.1 let `config.yaml`'s `port: 80` win over the HTTPS default, so the
+  scanner completed a TLS handshake on port 80 and judged the proxy's 404
+  (fixed on the detect side in samma-io/detect#9).
+- The `filebeat` and `live` ConfigMaps of the legacy `base` scanner are
+  created only with `scanners.legacyBaseScanner: true`
+  (`SAMMA_LEGACY_BASE_SCANNER`); nothing else uses them.
+- The bridge prints the release it belongs to from `SAMMA_VERSION`, which
+  the chart sets from `appVersion` (the raw manifest sets it by hand);
+  0.2.1 still said 0.2.0.
+
 ## 0.2.0
 
 The first published release of the chart and the images. Pull requests

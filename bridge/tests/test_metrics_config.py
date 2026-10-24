@@ -81,6 +81,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.run_idle_timeout_seconds, 3600)
         self.assertFalse(config.database_enabled)
         self.assertTrue(config.scanreports_enabled)
+        self.assertEqual(config.version, "dev")
         self.assertEqual(config.nats_connect_options(), {"servers": ["nats://nats:4222"]})
 
     def test_values(self):
@@ -88,7 +89,9 @@ class ConfigTests(unittest.TestCase):
             "NATS_URL": "nats://broker:4222", "NATS_SUBJECT": "scans.", "NATS_USER": "bridge", "NATS_PASSWORD": "p@ss word",
             "DATABASE_URL": "postgresql://x", "SAMMA_NAMESPACE": "scans", "METRICS_PORT": "9999",
             "SCANNER_CACHE_SECONDS": "0", "STRAGGLER_WAIT_SECONDS": "5", "RUN_IDLE_TIMEOUT_SECONDS": "10", "SCANREPORTS_ENABLED": "false",
+            "SAMMA_VERSION": " 0.2.2 ",
         })
+        self.assertEqual(config.version, "0.2.2")
         self.assertEqual(config.subjects, ["scans", "scans.>"])
         self.assertEqual(config.nats_connect_options(), {"servers": ["nats://broker:4222"], "user": "bridge", "password": "p@ss word"})
         self.assertTrue(config.database_enabled)
@@ -102,6 +105,10 @@ class ConfigTests(unittest.TestCase):
     def test_credentials_file_wins(self):
         config = Config.from_env({"NATS_CREDS": "/etc/nats/bridge.creds", "NATS_USER": "bridge", "NATS_PASSWORD": "x"})
         self.assertEqual(config.nats_connect_options(), {"servers": ["nats://nats:4222"], "user_credentials": "/etc/nats/bridge.creds"})
+
+    def test_blank_version_is_dev(self):
+        self.assertEqual(Config.from_env({"SAMMA_VERSION": ""}).version, "dev")
+        self.assertEqual(Config(version=None).version, "dev")
 
     def test_bad_numbers_fall_back(self):
         config = Config.from_env({"METRICS_PORT": "many", "STRAGGLER_WAIT_SECONDS": "-3"})

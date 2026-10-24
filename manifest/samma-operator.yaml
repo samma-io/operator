@@ -494,6 +494,8 @@ spec:
               value: "3600"
             - name: SAMMA_NMAP_RAW_SOCKETS
               value: "false"
+            - name: SAMMA_LEGACY_BASE_SCANNER
+              value: "false"
             - name: SAMMA_SCANNER_RUN_AS_USER
               value: "1000"
             - name: SAMMA_SCANNER_IMAGE_PREFIX
@@ -871,6 +873,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            # The release, for the startup banner: keep it equal to the
+            # bridge image tag above.
+            - name: SAMMA_VERSION
+              value: "0.2.0"
             - name: NATS_URL
               value: nats://nats:4222
             - name: NATS_SUBJECT

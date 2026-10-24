@@ -18,7 +18,6 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from samma_bridge import __version__  # noqa: E402
 from samma_bridge import messages as message_schema  # noqa: E402
 from samma_bridge.accumulator import Accumulator  # noqa: E402
 from samma_bridge.config import Config  # noqa: E402
@@ -102,7 +101,7 @@ async def main():
     state = {"ready": False}
     start_http_server(metrics.registry, config.metrics_port, ready=lambda: state["ready"])
     log.info("samma bridge %s: metrics on :%d, namespace %s, ScanReports %s, TimescaleDB %s",
-             __version__, config.metrics_port, config.namespace,
+             config.version, config.metrics_port, config.namespace,
              "on" if config.scanreports_enabled else "off", "on" if config.database_enabled else "off")
 
     db = await connect_database(config.database_url) if config.database_enabled else None
