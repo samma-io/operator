@@ -12,7 +12,7 @@ spec:
       labels:
         app: samma-bridge
     spec:
-      serviceAccountName: samma-operator
+      serviceAccountName: {{ .Values.serviceAccounts.bridge }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

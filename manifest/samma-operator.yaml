@@ -69,11 +69,33 @@ spec:
     shortNames:
       - sc
 ---
+# Least-privilege RBAC. Keep in sync with helm/samma-operator/templates/rbac.yaml.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: samma-operator
   namespace: samma-io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: samma-operator
+rules:
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["samma.io"]
+    resources: ["scanner", "scanner/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["samma.io"]
+    resources: ["scanreports", "scanreports/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["", "events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -82,11 +104,118 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: cluster-admin
+  name: samma-operator
 subjects:
   - kind: ServiceAccount
     name: samma-operator
     namespace: samma-io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: samma-operator
+  namespace: samma-io
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: samma-operator
+  namespace: samma-io
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: samma-operator
+subjects:
+  - kind: ServiceAccount
+    name: samma-operator
+    namespace: samma-io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: samma-api
+  namespace: samma-io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: samma-api
+  namespace: samma-io
+rules:
+  - apiGroups: ["samma.io"]
+    resources: ["scanner"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: samma-api
+  namespace: samma-io
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: samma-api
+subjects:
+  - kind: ServiceAccount
+    name: samma-api
+    namespace: samma-io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: samma-bridge
+  namespace: samma-io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: samma-bridge
+  namespace: samma-io
+rules:
+  - apiGroups: ["samma.io"]
+    resources: ["scanreports", "scanreports/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["samma.io"]
+    resources: ["scanner"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: samma-bridge
+  namespace: samma-io
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: samma-bridge
+subjects:
+  - kind: ServiceAccount
+    name: samma-bridge
+    namespace: samma-io
+---
+# Scanner pods: no rules bound, no token mounted.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: samma-scanner
+  namespace: samma-io
+automountServiceAccountToken: false
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -105,15 +234,27 @@ spec:
       serviceAccountName: samma-operator
       nodeSelector:
         kubernetes.io/arch: amd64
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: samma-operator
           image: mattiashem/samma-operator:latest
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
           env:
+            - name: SAMMA_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: SAMMA_IO_ID
               value: ""
             - name: SAMMA_IO_TAGS
@@ -138,6 +279,33 @@ spec:
               value: "false"
             - name: SAMMA_ALLOW_UNMANAGED_TARGETS
               value: "true"
+            # Scanner Jobs and CronJobs (README, "Scan Jobs and CronJobs")
+            - name: SAMMA_SCANNER_SERVICE_ACCOUNT
+              value: "samma-scanner"
+            - name: SAMMA_MAX_CONCURRENT_SCANS
+              value: "2"
+            - name: SAMMA_SCAN_DEADLINE_SECONDS
+              value: "900"
+            - name: SAMMA_JOB_TTL_SECONDS
+              value: "3600"
+            - name: SAMMA_NMAP_RAW_SOCKETS
+              value: "false"
+            - name: SAMMA_SCANNER_RUN_AS_USER
+              value: "1000"
+            - name: SAMMA_SCANNER_IMAGE_PREFIX
+              value: ""
+            - name: SAMMA_SCANNER_IMAGE_TAG
+              value: ""
+            - name: SAMMA_SCANNER_IMAGE_PULL_POLICY
+              value: ""
+            - name: SAMMA_SCANNER_CPU_REQUEST
+              value: "100m"
+            - name: SAMMA_SCANNER_MEMORY_REQUEST
+              value: "128Mi"
+            - name: SAMMA_SCANNER_CPU_LIMIT
+              value: "1"
+            - name: SAMMA_SCANNER_MEMORY_LIMIT
+              value: "512Mi"
           resources:
             requests:
               cpu: 100m
@@ -174,7 +342,7 @@ spec:
       labels:
         app: samma-api
     spec:
-      serviceAccountName: samma-operator
+      serviceAccountName: samma-api
       nodeSelector:
         kubernetes.io/arch: amd64
       containers:
@@ -186,6 +354,10 @@ spec:
               containerPort: 8080
               protocol: TCP
           env:
+            - name: SAMMA_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: SAMMA_IO_ID
               value: ""
             - name: SAMMA_IO_TAGS
@@ -352,7 +524,7 @@ spec:
       labels:
         app: samma-bridge
     spec:
-      serviceAccountName: samma-operator
+      serviceAccountName: samma-bridge
       nodeSelector:
         kubernetes.io/arch: amd64
       containers:
@@ -373,3 +545,8 @@ spec:
             limits:
               cpu: 200m
               memory: 256Mi
+# Uninstall: the Helm chart runs operator/code/uninstall_cleanup.py from a
+# pre-delete hook. With the raw manifest, delete every Scanner first:
+#   kubectl -n samma-io delete scanner --all
+# Their Jobs and CronJobs follow through garbage collection; then
+#   kubectl delete -f manifest/samma-operator.yaml

@@ -1,0 +1,48 @@
+{{- if .Values.hooks.preDeleteCleanup }}
+# Runs before `helm uninstall` removes anything else: deletes every Scanner
+# in the namespace (their Jobs and CronJobs follow through garbage
+# collection) and any scanner Job or CronJob an older release left behind.
+# Without it, Scanners that outlive the operator would block removal of the
+# CRD and the namespace. Skip it with `helm uninstall --no-hooks`.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: samma-operator-cleanup
+  namespace: {{ .Values.namespace }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      serviceAccountName: {{ .Values.serviceAccounts.operator }}
+      restartPolicy: Never
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cleanup
+          image: {{ .Values.operator.image }}:{{ .Values.operator.tag }}
+          imagePullPolicy: {{ .Values.operator.pullPolicy }}
+          command: ["python3", "/code/uninstall_cleanup.py"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: SAMMA_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources:
+            {{- toYaml .Values.operator.resources | nindent 12 }}
+{{- end }}

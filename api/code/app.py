@@ -22,7 +22,9 @@ config.load_incluster_config()
 k8sapi = client.CustomObjectsApi()
 core_v1_api = client.CoreV1Api()
 
-_GROUP, _VERSION, _NS, _PLURAL = 'samma.io', 'v1', 'samma-io', 'scanner'
+# The namespace the operator and the Scanners live in. The chart sets
+# SAMMA_NAMESPACE from the pod's own namespace.
+_GROUP, _VERSION, _NS, _PLURAL = 'samma.io', 'v1', os.getenv('SAMMA_NAMESPACE', 'samma-io'), 'scanner'
 
 
 def sanitize_name(value):
@@ -88,11 +90,11 @@ def post_target_to_api(target, target_id):
 
 @app.route('/')
 def hello_world():
-    # Get all scanner from the samma-io namespace
+    # Get all scanner from the operator namespace
     returnThis={}
     group = 'samma.io' # str | The custom resource's group name
     version = 'v1' # str | The custom resource's version
-    namespace = 'samma-io' # str | The custom resource's namespace
+    namespace = _NS # str | The custom resource's namespace
     plural = 'scanner' # str | The custom resource's plural name. For TPRs this would be lowercase plural kind.
 
     try:
@@ -173,7 +175,7 @@ def create_scanners():
             "kind": "Scanner",
             "metadata": {
                 "name": "{0}".format(target.replace('.','-')),
-                "namespace": "samma-io"
+                "namespace": _NS
             },
             "spec": {
                 "target": "{0}".format(target),
@@ -190,7 +192,7 @@ def create_scanners():
         # Add the scanner to the cluster as a CDR that the operator can read
         group = 'samma.io' # str | The custom resource's group name
         version = 'v1' # str | The custom resource's version
-        namespace = 'samma-io' # str | The custom resource's namespace
+        namespace = _NS # str | The custom resource's namespace
         plural = 'scanner' # str | The custom resource's plural name. For TPRs this would be lowercase plural kind.
         body = scannerJSON # object | The JSON schema of the Resource to create.
         try:
@@ -208,11 +210,11 @@ def create_scanners():
 
 @app.route('/scanner', methods=['GET'])
 def list_scanners():
-    # Get all scanner from the samma-io namespace
+    # Get all scanner from the operator namespace
     returnThis={}
     group = 'samma.io' # str | The custom resource's group name
     version = 'v1' # str | The custom resource's version
-    namespace = 'samma-io' # str | The custom resource's namespace
+    namespace = _NS # str | The custom resource's namespace
     plural = 'scanner' # str | The custom resource's plural name. For TPRs this would be lowercase plural kind.
 
     try:
@@ -230,7 +232,7 @@ def delete_scanners():
         content = request.get_json()
         group = 'samma.io' # str | The custom resource's group name
         version = 'v1' # str | The custom resource's version
-        namespace = 'samma-io' # str | The custom resource's namespace
+        namespace = _NS # str | The custom resource's namespace
         plural = 'scanner' # str | The custom resource's plural name. For TPRs this would be lowercase plural kind.
         name = content['name']
         grace_period_seconds = 0

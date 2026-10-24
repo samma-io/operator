@@ -1,9 +1,24 @@
 # Namespace to deploy into
 namespace: samma-io
 
+# Create the Namespace as part of the release (the upstream default). Set to
+# false when the namespace exists already, for example when a GitOps tool or
+# `helm install --create-namespace` makes it.
+createNamespace: true
+
 # Node architecture selector (set to "" to disable)
 nodeSelector:
   kubernetes.io/arch: amd64
+
+# ServiceAccounts (README, "RBAC"). The operator gets a ClusterRole for
+# Ingresses, Scanners and events plus a namespaced Role for Jobs and
+# CronJobs; the API and the bridge get namespaced Roles; scanner pods run
+# under an account with no rights and no mounted token.
+serviceAccounts:
+  operator: samma-operator
+  api: samma-api
+  bridge: samma-bridge
+  scanner: samma-scanner
 
 # Operator component
 operator:
@@ -17,6 +32,52 @@ operator:
     limits:
       cpu: 100m
       memory: 256Mi
+
+# Scanner Jobs and CronJobs the operator creates (README, "Scan Jobs and CronJobs").
+scanners:
+  # Image references. Every scanner has a default image in
+  # operator/code/jobspec.py. imagePrefix replaces the registry and
+  # organisation of every default, keeping the image's base name
+  # (ghcr.io/samma-io/detect-dns-scanner:latest becomes
+  # <imagePrefix>/detect-dns-scanner:<imageTag, or the default tag>).
+  # images sets a full reference for one scanner and wins over the prefix.
+  imagePrefix: ""
+  imageTag: ""
+  # imagePullPolicy for scanner containers; empty keeps the Kubernetes default.
+  pullPolicy: ""
+  images: {}
+  #  nmap: ghcr.io/samma-io/nmap:v0.3
+  #  dns-scanner: registry.example.com/mirror/detect-dns-scanner:2026.10
+  # Requests and limits of every scanner container.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  # How many scan Jobs may run at the same time. A Scanner's first Jobs wait
+  # in a queue for a free slot; CronJob runs count towards the limit.
+  # 0 removes the limit.
+  maxConcurrentScans: 2
+  # activeDeadlineSeconds of every scan Job: a scan still running after this
+  # is stopped and marked failed.
+  scanDeadlineSeconds: 900
+  # Finished Jobs are removed after this many seconds.
+  ttlSecondsAfterFinished: 3600
+  # true adds the NET_RAW capability to the nmap containers (SYN scans).
+  # false keeps every scanner at drop ALL and asks nmap for connect scans
+  # through NMAP_UNPRIVILEGED; the nmap image has to honour that.
+  nmapRawSockets: false
+  # The uid scanner containers run as. The samma images create their user
+  # with useradd, which gives uid 1000.
+  runAsUser: 1000
+
+# Uninstall hook: a pre-delete Job that removes every Scanner (and the Jobs
+# and CronJobs of older releases) before the operator and the CRD go away,
+# so `helm uninstall` never blocks on CRD removal.
+hooks:
+  preDeleteCleanup: true
 
 # API component
 api:

@@ -1,8 +1,38 @@
+# Least-privilege RBAC (README, "RBAC").
+#
+# The operator (kopf) watches Ingresses in every namespace and Scanners,
+# writes its progress as annotations on both (hence patch), creates Scanners
+# from Ingresses, posts events, and manages Jobs and CronJobs in its own
+# namespace. ScanReports are granted ahead of the resource that will carry
+# scan results, so that change needs no second RBAC change. kopf lists and
+# watches CustomResourceDefinitions to notice resources that appear later;
+# the operator turns that scan off, the read-only grant is a fallback.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: samma-operator
+  name: {{ .Values.serviceAccounts.operator }}
   namespace: {{ .Values.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: samma-operator
+rules:
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["samma.io"]
+    resources: ["scanner", "scanner/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["samma.io"]
+    resources: ["scanreports", "scanreports/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["", "events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -11,8 +41,121 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: cluster-admin
+  name: samma-operator
 subjects:
   - kind: ServiceAccount
-    name: samma-operator
+    name: {{ .Values.serviceAccounts.operator }}
     namespace: {{ .Values.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: samma-operator
+  namespace: {{ .Values.namespace }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: samma-operator
+  namespace: {{ .Values.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: samma-operator
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccounts.operator }}
+    namespace: {{ .Values.namespace }}
+---
+# The REST API creates, lists and deletes Scanners and reads the
+# scanner-profiles ConfigMap, all in this namespace.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.serviceAccounts.api }}
+  namespace: {{ .Values.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: samma-api
+  namespace: {{ .Values.namespace }}
+rules:
+  - apiGroups: ["samma.io"]
+    resources: ["scanner"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: samma-api
+  namespace: {{ .Values.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: samma-api
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccounts.api }}
+    namespace: {{ .Values.namespace }}
+---
+# The bridge will write ScanReports and check incoming results against the
+# Scanners that exist. It uses none of this yet; the rights are in place for
+# that change.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.serviceAccounts.bridge }}
+  namespace: {{ .Values.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: samma-bridge
+  namespace: {{ .Values.namespace }}
+rules:
+  - apiGroups: ["samma.io"]
+    resources: ["scanreports", "scanreports/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["samma.io"]
+    resources: ["scanner"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: samma-bridge
+  namespace: {{ .Values.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: samma-bridge
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccounts.bridge }}
+    namespace: {{ .Values.namespace }}
+---
+# Scanner pods: no rules bound, and no token mounted (the Job spec repeats
+# automountServiceAccountToken: false).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.serviceAccounts.scanner }}
+  namespace: {{ .Values.namespace }}
+automountServiceAccountToken: false

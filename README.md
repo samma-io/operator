@@ -41,8 +41,8 @@ describes every scanner and what to use it for.
 PUT /target  →  API creates Scanner CRDs  →  Operator watches CRDs
                                                      │
                                           ┌──────────┴──────────┐
-                                     deployJob()          deployCron()
-                                     (runs now)           (weekly 0 0 * * 0)
+                                    Job (runs now,         CronJob (weekly,
+                                    bounded queue)         hashed minute)
                                           │                     │
                                     Scanner Pod          CronJob Pod
                                           │
@@ -58,6 +58,10 @@ PUT /target  →  API creates Scanner CRDs  →  Operator watches CRDs
 There are two scanner families:
 
 **detect** — Modern scanners (`ghcr.io/samma-io/detect-*:latest`). Single container, results published directly to NATS.
+
+The images below are the defaults built into `operator/code/jobspec.py`. Point them at your own
+registry with the `scanners.imagePrefix`, `scanners.imageTag` and `scanners.images` Helm values
+(see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs)).
 
 | Scanner | Image |
 |---|---|
@@ -109,8 +113,10 @@ spec:
 kubectl apply -f manifest/test/nmap.yaml
 ```
 
-The operator will immediately create a Job and a weekly CronJob for each scanner. The target
-must pass [target validation](#target-validation).
+The operator creates a Job now and a weekly CronJob for each scanner, both owned by the Scanner
+(see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs)). The target must pass
+[target validation](#target-validation). A scanner can be named with a template, as in
+`scanners: ["nmap/http"]`, or the `templates` list can select variants for every scanner.
 
 ### 3. Ingress annotations
 
@@ -144,7 +150,7 @@ spec:
 
 | Annotation (`samma-io.alpha.kubernetes.io/…`) | What it does |
 |---|---|
-| `enable` | Turns scanning on. Any value counts, even `"false"`, so remove the annotation to turn it off. |
+| `enable` | Turns scanning on. `"false"`, `"0"`, `"no"` and `"off"` turn it off, and so does removing the annotation. |
 | `profile` | Comma-separated [profiles](#scanner-profiles). Takes priority over `scanners`. |
 | `scanners` | An explicit scanner list, used when there is no `profile`. |
 | `scheduler` | Cron expression for the repeat scan. The default is weekly. |
@@ -153,19 +159,26 @@ spec:
 | `samma_io_json` | Extra JSON added to every finding. |
 | `compliance` | Compliance tags, e.g. `pci-dss`. samma.io runs the matching validated vendor scanner. Needs the [samma.io connection](#connect-to-sammaio). |
 
-Without `profile` or `scanners`, the `default` profile is used.
+Without `profile` or `scanners`, the `default` profile is used. Only `scheduler`, `samma_io_id`,
+`samma_io_tags`, `samma_io_json`, `write_to_file` and `elasticsearch` are copied into the Scanner;
+other annotations under the prefix are ignored.
 
 #### Lifecycle
 
-- **Ingress created:** one `Scanner` per scanner and host, named
-  `<scanner>-<host-with-dashes>[-<template>]` in `samma-io`. Each one runs a Job now and a CronJob on
-  its schedule.
-- **Ingress deleted:** those Scanners are removed, and samma.io stops its external and vendor scans
-  for the host. Known issue: the Jobs and CronJobs of the **detect** scanners are currently left
-  behind. Remove them by hand with
-  `kubectl -n samma-io get cronjobs,jobs -o name | grep <host-with-dashes> | xargs kubectl -n samma-io delete`.
-- **Annotations changed:** they are read when the Ingress is created. Recreate the Ingress
-  (`kubectl replace --force -f ingress.yaml`) to apply new annotations.
+- **Ingress created:** one `Scanner` per scanner and host in the operator's namespace, named
+  `<scanner>[-<template>]-<hash>` where the hash covers the Ingress and the host. Each Scanner
+  carries the labels `samma.io/ingress-namespace` and `samma.io/ingress-name` and the annotation
+  `samma.io/ingress: <namespace>/<name>`. Each one runs a Job now and a CronJob on its schedule.
+- **Annotations or hosts changed:** the operator reconciles. New hosts get Scanners, removed hosts
+  lose theirs, and a changed `scheduler` or tag updates the Scanner, which recreates its CronJob.
+  Setting `enable` to `"false"` or removing it deletes the Scanners.
+- **Ingress deleted:** the Scanners are removed by label, their Jobs and CronJobs follow through
+  Kubernetes garbage collection, and samma.io stops its external and vendor scans for the host.
+  An Ingress in the operator's own namespace also owns its Scanners through `ownerReferences`;
+  Kubernetes does not allow an owner in another namespace, which is why the labels exist.
+
+Two Ingresses that serve the same host each get their own Scanners; the Jobs and CronJobs for the
+host are shared between them and go away when the last one does.
 
 Keep the annotations in git with the rest of the Ingress. Your scanning setup is then reviewed and
 versioned, and ArgoCD or Flux applies it.
@@ -207,6 +220,111 @@ python3 -m unittest discover -s operator/tests -t operator
 
 ---
 
+## Scan Jobs and CronJobs
+
+Jobs and CronJobs are built as objects in `operator/code/jobspec.py` from a table of scanner
+definitions (image, entrypoint per variant, extra environment); nothing is rendered from YAML
+templates any more. Every object the operator creates carries these labels and annotations:
+
+| Label or annotation | Value |
+|---|---|
+| `app.kubernetes.io/managed-by` | `samma-operator` |
+| `samma.io/scanner` | the scanner, for example `nmap` |
+| `samma.io/template` | the variant, for example `port`; equal to the scanner name when it has one variant |
+| `samma.io/target-hash` | the first eight hex characters of `sha256(target)` |
+| `samma.io/scanner-uid` | the uid of the owning Scanner |
+| `samma.io/ingress-namespace`, `samma.io/ingress-name` | on everything that came from an Ingress |
+| `samma.io/target` (annotation) | the target |
+| `samma.io/scanner-name` (annotation) | the Scanner's name |
+| `samma.io/spec-hash` (annotation, CronJobs) | hash of the built spec; a change recreates the CronJob |
+
+### Names
+
+Jobs and CronJobs are named `<scanner>[-<template>]-<target hash>`, for example
+`nmap-port-3f2a9b1c` or `tls-scanner-9c0ffee1`. The old names carried the target with dots turned
+into hyphens, which is not a valid name for an IPv6 address and is too long for many hostnames.
+The target itself is in the `samma.io/target` annotation:
+
+```bash
+kubectl -n samma-io get jobs,cronjobs -l samma.io/scanner=nmap \
+  -o custom-columns='NAME:.metadata.name,TARGET:.metadata.annotations.samma\.io/target'
+```
+
+### Ownership and cleanup
+
+Every Job and CronJob has an `ownerReference` to its Scanner, so deleting the Scanner removes them
+through Kubernetes garbage collection. The kopf delete handlers are `optional=True`: they add no
+finalizers, so a Scanner or an Ingress can always be deleted, with or without the operator running.
+Finished Jobs are removed after `ttlSecondsAfterFinished` (default one hour), a Job retries once
+(`backoffLimit: 1`) and is stopped after `activeDeadlineSeconds` (default 900 seconds).
+
+When a Scanner is deleted the operator also removes Jobs and CronJobs an older version created
+under the pre-hash names, so an upgrade does not leave them behind.
+
+`helm uninstall` runs a pre-delete hook Job (`operator/code/uninstall_cleanup.py`) that deletes
+every Scanner and every leftover scanner Job and CronJob in the namespace before the operator and
+the CRD are removed, so removal never blocks on the CRD. Turn it off with `hooks.preDeleteCleanup=false`
+or `helm uninstall --no-hooks`.
+
+### Pod security
+
+Scanner pods run under the `samma-scanner` ServiceAccount, which has no rights, with
+`automountServiceAccountToken: false`. Every scanner container runs with:
+
+- `runAsNonRoot: true` and `runAsUser` from `scanners.runAsUser` (default 1000, the uid `useradd`
+  gives the `samma` user in the images),
+- `seccompProfile: RuntimeDefault`,
+- `capabilities: drop: [ALL]`,
+- `readOnlyRootFilesystem: true` with `emptyDir` volumes at `/out` and `/tmp`,
+- requests and limits from `scanners.resources`,
+- `allowPrivilegeEscalation: false`, except for `nikto` and `nmap`: those images run the tool
+  through `sudo`, which needs privilege escalation. The flag goes away once the images run the tool
+  directly. The detect scanners and tsunami do not get it.
+
+nmap SYN scans need raw sockets. With `scanners.nmapRawSockets=false` (the default) no capability
+is added and the nmap containers get `NMAP_UNPRIVILEGED=1`, which nmap reads itself and which makes
+it use connect scans; the nmap image has to pass that through (and use `-sT` for the port scan).
+With `true` the nmap containers get `NET_RAW` and `NMAP_PRIVILEGED=1`, which is today's behaviour.
+Only nmap ever receives the capability.
+
+The legacy `base` scanner keeps its filebeat sidecar; it is the only multi-container scanner.
+
+### Concurrency and scheduling
+
+A Scanner's first Jobs go through a queue. At most `scanners.maxConcurrentScans` scan Jobs
+(default 2) run at the same time in the namespace; Jobs started by CronJobs count too. Queued
+Jobs start in order as slots free up, checked every `SAMMA_QUEUE_INTERVAL_SECONDS` (default 15).
+A Scanner whose first scan is waiting carries the annotation `samma.io/initial-scan: queued` and
+an event `ScanQueued`; it becomes `launched` once every Job exists. After an operator restart,
+Scanners still marked `queued` are queued again. `maxConcurrentScans: 0` removes the limit.
+
+CronJobs use `concurrencyPolicy: Forbid`, keep one successful and one failed Job, and skip a run
+that could not start within `startingDeadlineSeconds: 600`. A Scanner on the default weekly
+schedule gets a minute derived from the target hash, so many targets registered on the same day do
+not all fire in the same minute; a `scheduler` you set is used unchanged.
+
+Changing a Scanner's `spec` recreates its CronJobs. The first Job is not run again.
+
+---
+
+## RBAC
+
+The operator no longer binds to `cluster-admin`. Four ServiceAccounts are created
+(`serviceAccounts.*` in the chart):
+
+| ServiceAccount | Rights |
+|---|---|
+| `samma-operator` | ClusterRole: Ingresses get, list, watch, patch (kopf writes its progress as annotations); `scanner.samma.io` full; `scanreports.samma.io` get, list, watch, create, update, patch (for the upcoming ScanReport resource); events create, patch; CustomResourceDefinitions list, watch. Role in the namespace: Jobs and CronJobs full; ConfigMaps get, list, watch, create, patch; Secrets get, list; Pods get, list. |
+| `samma-api` | Role: `scanner.samma.io` get, list, create, patch, delete; ConfigMaps get, list. |
+| `samma-bridge` | Role: `scanreports.samma.io` write, `scanner.samma.io` read. Unused until the bridge writes ScanReports. |
+| `samma-scanner` | Nothing. Scanner pods run under it with no token mounted. |
+
+The operator runs in the namespace it is deployed to: `SAMMA_NAMESPACE` is set from the pod's
+own namespace through the Downward API, and the API reads the same variable. The raw manifest in
+`manifest/samma-operator.yaml` carries the same ServiceAccounts, roles and bindings.
+
+---
+
 ## Connect to samma.io
 
 Give the operator a samma.io API token (create one under **Dashboard → Tokens**):
@@ -234,7 +352,7 @@ These map to the `SAMMA_IO_API_URL`, `SAMMA_IO_API_TOKEN` and `SAMMA_IO_PROFILE_
 
 ## Scanner profiles
 
-Profiles are stored in the `scanner-profiles` ConfigMap in the `samma-io` namespace. Pass `"profile": "<name>"` to `PUT /target` to select one.
+Profiles are stored in the `scanner-profiles` ConfigMap in the operator's namespace. Pass `"profile": "<name>"` to `PUT /target` to select one.
 
 | Profile | Scanners | Use when |
 |---|---|---|
@@ -469,6 +587,19 @@ curl -X DELETE http://localhost:8080/scanner \
 | `SAMMA_IO_PROFILE_ID` | — | Profile ID sent to external API |
 | `SAMMA_ALLOW_PRIVATE_TARGETS` | `false` | `true` lets a target resolve to a private, loopback, link-local, multicast or carrier-grade NAT address. See [Target validation](#target-validation). |
 | `SAMMA_ALLOW_UNMANAGED_TARGETS` | `true` | `false` refuses a Scanner whose target is not the host of an Ingress in the cluster. |
+| `SAMMA_NAMESPACE` | `samma-io` | The namespace Scanners, Jobs and CronJobs live in. The chart sets it from the pod's namespace. |
+| `SAMMA_SCANNER_SERVICE_ACCOUNT` | `samma-scanner` | ServiceAccount of scanner pods. |
+| `SAMMA_MAX_CONCURRENT_SCANS` | `2` | Scan Jobs allowed to run at the same time; `0` for no limit. See [Concurrency and scheduling](#concurrency-and-scheduling). |
+| `SAMMA_QUEUE_INTERVAL_SECONDS` | `15` | How often the queue checks for a free slot. |
+| `SAMMA_SCAN_DEADLINE_SECONDS` | `900` | `activeDeadlineSeconds` of every scan Job. |
+| `SAMMA_JOB_TTL_SECONDS` | `3600` | `ttlSecondsAfterFinished` of every scan Job. |
+| `SAMMA_NMAP_RAW_SOCKETS` | `false` | `true` adds `NET_RAW` to the nmap containers. See [Pod security](#pod-security). |
+| `SAMMA_SCANNER_RUN_AS_USER` | `1000` | uid of scanner containers. |
+| `SAMMA_SCANNER_IMAGE_PREFIX` | unset | Registry and organisation that replace the default of every scanner image. |
+| `SAMMA_SCANNER_IMAGE_TAG` | unset | Tag used together with the prefix (default: each image's own tag). |
+| `SAMMA_SCANNER_IMAGE_PULL_POLICY` | unset | `imagePullPolicy` of scanner containers. |
+| `SAMMA_SCANNER_IMAGE_<NAME>` | unset | Full image reference for one scanner, for example `SAMMA_SCANNER_IMAGE_HTTP_HEADERS_SCANNER`. |
+| `SAMMA_SCANNER_CPU_REQUEST`, `SAMMA_SCANNER_MEMORY_REQUEST`, `SAMMA_SCANNER_CPU_LIMIT`, `SAMMA_SCANNER_MEMORY_LIMIT` | `100m`, `128Mi`, `1`, `512Mi` | Resources of every scanner container. |
 
 ### API
 
@@ -561,7 +692,7 @@ helm upgrade samma-operator helm/samma-operator/ -f my-values.yaml
 **Uninstall:**
 
 ```bash
-helm uninstall samma-operator
+helm uninstall samma-operator       # the pre-delete hook removes every Scanner first
 kubectl delete namespace samma-io   # removes all data
 ```
 
@@ -579,6 +710,16 @@ kubectl delete namespace samma-io   # removes all data
 | `config.apiToken` | `""` | External samma.io API token |
 | `config.natsUrl` | `nats://nats:4222` | NATS server URL |
 | `nodeSelector` | `kubernetes.io/arch: amd64` | Node selector for all pods |
+| `createNamespace` | `true` | Create the Namespace as part of the release |
+| `serviceAccounts.operator` / `api` / `bridge` / `scanner` | `samma-operator`, `samma-api`, `samma-bridge`, `samma-scanner` | ServiceAccount names, see [RBAC](#rbac) |
+| `scanners.imagePrefix`, `scanners.imageTag`, `scanners.images` | `""`, `""`, `{}` | Scanner image references, see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs) |
+| `scanners.resources` | 100m/128Mi requests, 1/512Mi limits | Resources of every scanner container |
+| `scanners.maxConcurrentScans` | `2` | Scan Jobs allowed to run at the same time |
+| `scanners.scanDeadlineSeconds` | `900` | `activeDeadlineSeconds` of scan Jobs |
+| `scanners.ttlSecondsAfterFinished` | `3600` | When finished Jobs are removed |
+| `scanners.nmapRawSockets` | `false` | Give nmap `NET_RAW` for SYN scans |
+| `scanners.runAsUser` | `1000` | uid of scanner containers |
+| `hooks.preDeleteCleanup` | `true` | Pre-delete hook that removes every Scanner on uninstall |
 
 ---
 
