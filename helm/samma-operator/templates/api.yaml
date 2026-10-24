@@ -19,10 +19,20 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.api.runAsUser }}
+        runAsGroup: {{ .Values.api.runAsGroup }}
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: samma-api
           image: {{ include "samma.image" (dict "spec" .Values.api "chart" .Chart) }}
           imagePullPolicy: {{ .Values.api.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 8080

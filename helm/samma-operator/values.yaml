@@ -41,6 +41,11 @@ operator:
   tag: ""
   digest: ""
   pullPolicy: IfNotPresent
+  # The uid and gid the pod runs as. The image creates its user with uid 1000.
+  # A numeric id is what lets the kubelet verify runAsNonRoot; a named user
+  # in the image is refused with CreateContainerConfigError.
+  runAsUser: 1000
+  runAsGroup: 1000
   resources:
     requests:
       cpu: 100m
@@ -119,6 +124,9 @@ api:
   tag: ""
   digest: ""
   pullPolicy: IfNotPresent
+  # The uid and gid the pod runs as (the image's user is uid 1000).
+  runAsUser: 1000
+  runAsGroup: 1000
   resources:
     requests:
       cpu: 100m
@@ -133,6 +141,10 @@ nats:
   tag: "2"
   digest: ""
   pullPolicy: IfNotPresent
+  # The nats image has no user of its own and the server needs no writable
+  # path, so it runs read-only as this unprivileged uid and gid.
+  runAsUser: 1000
+  runAsGroup: 1000
   resources:
     requests:
       cpu: 50m
@@ -202,6 +214,9 @@ bridge:
   tag: ""
   digest: ""
   pullPolicy: IfNotPresent
+  # The uid and gid the pod runs as (the image's user is uid 1000).
+  runAsUser: 1000
+  runAsGroup: 1000
   # Write ScanReport objects from schema v2 messages.
   scanReports: true
   # Insert every message into TimescaleDB as before. false leaves the

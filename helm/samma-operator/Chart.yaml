@@ -4,8 +4,8 @@ description: Kubernetes operator that runs security scanners against the hosts y
 type: application
 # version and appVersion move together: a release is a tag v<version>, and
 # the release workflow refuses a tag that does not match this file.
-version: 0.2.0
-appVersion: "0.2.0"
+version: 0.2.1
+appVersion: "0.2.1"
 kubeVersion: ">=1.25.0"
 home: https://samma.io
 sources:
@@ -32,6 +32,8 @@ annotations:
       displayName: ScanReport
       description: The findings of one scanner against one target.
   artifacthub.io/changes: |
+    - kind: fixed
+      description: The operator, bridge, API and NATS pods run as uid 1000 (values operator.runAsUser, bridge.runAsUser, api.runAsUser, nats.runAsUser), so the kubelet can verify runAsNonRoot and the pods start. 0.2.0 named the user in the images, which Kubernetes refuses with CreateContainerConfigError. The images now set a numeric USER as well, and the API and NATS pods drop every capability like the others.
     - kind: changed
       description: The chart is published to oci://ghcr.io/samma-io/charts; images are tagged with the release version and can be pinned by digest.
     - kind: changed

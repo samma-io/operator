@@ -20,10 +20,21 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.nats.runAsUser }}
+        runAsGroup: {{ .Values.nats.runAsGroup }}
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: nats
           image: {{ include "samma.image" (dict "spec" .Values.nats "chart" .Chart) }}
           imagePullPolicy: {{ .Values.nats.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           args: ["--config", "/etc/nats/nats-server.conf"]
           ports:
             - containerPort: 4222
