@@ -10,6 +10,25 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # No third-party packages: the tests fake the API clients.
+      - name: Operator unit tests
+        run: python3 -m unittest discover -s operator/tests -t operator
+
+      - name: Bridge unit tests
+        run: python3 -m unittest discover -s bridge/tests -t bridge
+
+      - name: Byte-compile every module
+        run: python3 -m compileall -q operator/code bridge/code api/code
+
   build-operator:
     runs-on: ubuntu-latest
     permissions:

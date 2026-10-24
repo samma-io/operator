@@ -92,7 +92,7 @@ api:
       cpu: 200m
       memory: 512Mi
 
-# NATS message broker
+# NATS message broker (README, "NATS authentication")
 nats:
   image: nats
   tag: "2"
@@ -103,6 +103,34 @@ nats:
     limits:
       cpu: 100m
       memory: 128Mi
+  # A Secret of your own with the keys scanner-password and bridge-password.
+  # Empty: the chart manages the Secret samma-nats-auth itself.
+  existingSecret: ""
+  auth:
+    # false runs NATS without authentication (the behaviour before this
+    # chart version): no Secret, no credentials in any pod.
+    enabled: true
+    # scanner may only publish on the scan subjects, bridge may only
+    # subscribe to them.
+    scannerUser: scanner
+    bridgeUser: bridge
+    # Passwords, alphanumeric (they travel in the scanner pods' NATS URL).
+    # Empty: kept from the Secret already in the cluster, else generated at
+    # install. `helm template` has no cluster to read from and generates new
+    # ones on every render; set them, or use existingSecret, when a GitOps
+    # tool renders the chart.
+    scannerPassword: ""
+    bridgePassword: ""
+
+# NetworkPolicies for NATS, the bridge and the scanner pods (README,
+# "Network policies"). Enforced only by a CNI that implements NetworkPolicy.
+networkPolicies:
+  enabled: true
+  # How the bridge reaches the Kubernetes API server, which is not a pod:
+  # by port to any address, or to the given CIDRs only.
+  apiServer:
+    ports: [443, 6443]
+    cidrs: []
 
 # TimescaleDB — scan results storage
 timescaledb:
@@ -121,11 +149,21 @@ timescaledb:
       cpu: 500m
       memory: 512Mi
 
-# Bridge — NATS → TimescaleDB
+# Bridge: NATS to ScanReports and TimescaleDB (README, "Scan reports")
 bridge:
   image: sammascanner/bridge
   tag: latest
   pullPolicy: Always
+  # Write ScanReport objects from schema v2 messages.
+  scanReports: true
+  # Insert every message into TimescaleDB as before. false leaves the
+  # bridge with no database at all.
+  storeInTimescaleDB: true
+  # How long the list of Scanners (used to drop messages for unknown
+  # targets) is cached, and how long a run waits for findings that are
+  # still in flight after its run message.
+  scannerCacheSeconds: 30
+  stragglerWaitSeconds: 30
   resources:
     requests:
       cpu: 50m

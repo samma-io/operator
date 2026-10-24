@@ -69,6 +69,202 @@ spec:
     shortNames:
       - sc
 ---
+# ScanReport: written by the bridge and the operator (README, "Scan reports").
+# Keep in sync with helm/samma-operator/templates/crd-scanreport.yaml.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: scanreports.samma.io
+spec:
+  scope: Namespaced
+  group: samma.io
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Target
+          type: string
+          jsonPath: .spec.target
+        - name: Scanner
+          type: string
+          jsonPath: .spec.scanner
+        - name: Outcome
+          type: string
+          jsonPath: .status.lastRun.outcome
+        - name: High
+          type: integer
+          jsonPath: .status.summary.high
+        - name: LastSuccess
+          type: date
+          jsonPath: .status.lastSuccessAt
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - target
+                - scanner
+              properties:
+                target:
+                  # The same expression as Scanner.spec.target.
+                  type: string
+                  maxLength: 253
+                  pattern: '^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])|[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{0,4}){2,7})$'
+                scanner:
+                  type: string
+                  maxLength: 63
+                  pattern: '^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$'
+                template:
+                  # The scanner variant (nmap has port, http and tls); absent
+                  # when the scanner has one.
+                  type: string
+                  maxLength: 63
+                  pattern: '^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$'
+                tier:
+                  type: string
+                  maxLength: 32
+                  pattern: '^[a-z0-9-]{1,32}$'
+            status:
+              type: object
+              properties:
+                scannerVersion:
+                  type: string
+                  maxLength: 64
+                lastRun:
+                  # The most recent run, whatever its outcome. Findings and
+                  # summary are replaced only when outcome is succeeded; a
+                  # failed or timed_out run leaves them as they were.
+                  type: object
+                  required:
+                    - runId
+                    - outcome
+                    - finishedAt
+                  properties:
+                    runId:
+                      # The scanner pod's name (its hostname).
+                      type: string
+                      maxLength: 253
+                    jobName:
+                      type: string
+                      maxLength: 253
+                    startedAt:
+                      type: string
+                      format: date-time
+                    finishedAt:
+                      type: string
+                      format: date-time
+                    outcome:
+                      type: string
+                      enum:
+                        - succeeded
+                        - failed
+                        - timed_out
+                    message:
+                      type: string
+                      maxLength: 512
+                lastSuccessAt:
+                  type: string
+                  format: date-time
+                summary:
+                  type: object
+                  properties:
+                    critical:
+                      type: integer
+                      minimum: 0
+                    high:
+                      type: integer
+                      minimum: 0
+                    medium:
+                      type: integer
+                      minimum: 0
+                    low:
+                      type: integer
+                      minimum: 0
+                    info:
+                      type: integer
+                      minimum: 0
+                findings:
+                  # Capped by the bridge: 200 entries, 256 KiB serialised,
+                  # evidence summaries only (never a response body).
+                  type: array
+                  maxItems: 200
+                  items:
+                    type: object
+                    required:
+                      - checkId
+                      - severity
+                      - title
+                      - endpoint
+                    properties:
+                      checkId:
+                        # Stable per scanner, never renamed; a renamed check
+                        # is a new check. For example SAMMA-TLS-PROTOCOL-DEPRECATED.
+                        type: string
+                        pattern: '^[A-Z0-9-]{3,80}$'
+                      severity:
+                        type: string
+                        enum:
+                          - CRITICAL
+                          - HIGH
+                          - MEDIUM
+                          - LOW
+                          - INFO
+                      title:
+                        type: string
+                        maxLength: 200
+                      endpoint:
+                        type: object
+                        required:
+                          - host
+                        properties:
+                          host:
+                            type: string
+                            maxLength: 253
+                          port:
+                            type: integer
+                            minimum: 1
+                            maximum: 65535
+                          scheme:
+                            type: string
+                            maxLength: 16
+                      evidence:
+                        type: string
+                        maxLength: 1024
+                      remediation:
+                        type: string
+                        maxLength: 1024
+                      references:
+                        type: array
+                        maxItems: 10
+                        items:
+                          type: string
+                          maxLength: 512
+                      cveIds:
+                        type: array
+                        maxItems: 50
+                        items:
+                          type: string
+                          pattern: '^CVE-\d{4}-\d{4,}$'
+                      compliance:
+                        type: array
+                        maxItems: 20
+                        items:
+                          type: string
+                          maxLength: 64
+  names:
+    kind: ScanReport
+    plural: scanreports
+    singular: scanreport
+    shortNames:
+      - sr
+---
 # Least-privilege RBAC. Keep in sync with helm/samma-operator/templates/rbac.yaml.
 apiVersion: v1
 kind: ServiceAccount
@@ -306,6 +502,11 @@ spec:
               value: "1"
             - name: SAMMA_SCANNER_MEMORY_LIMIT
               value: "512Mi"
+            # NATS credentials for scanner pods (README, "NATS authentication").
+            - name: SAMMA_NATS_SECRET
+              value: "samma-nats-auth"
+            - name: SAMMA_NATS_SCANNER_USER
+              value: "scanner"
           resources:
             requests:
               cpu: 100m
@@ -394,6 +595,53 @@ spec:
       targetPort: 8080
   type: ClusterIP
 ---
+# NATS authentication (README, "NATS authentication"): scanner pods log in
+# as "scanner" and may only publish on the scan subjects, the bridge logs in
+# as "bridge" and may only subscribe to them. SET BOTH PASSWORDS BEFORE
+# APPLYING: alphanumeric (they travel in the scanner pods' NATS URL), for
+# example `openssl rand -hex 24`. The values below are placeholders.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: samma-nats-auth
+  namespace: samma-io
+type: Opaque
+stringData:
+  scanner-password: "CHANGE-ME-scanner-password"
+  bridge-password: "CHANGE-ME-bridge-password"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nats-config
+  namespace: samma-io
+data:
+  nats-server.conf: |
+    listen: 0.0.0.0:4222
+    http: 0.0.0.0:8222
+    max_payload: 1MB
+    # Passwords come from the environment (Secret samma-nats-auth).
+    authorization {
+      users = [
+        {
+          user: "scanner"
+          password: $SAMMA_NATS_SCANNER_PASSWORD
+          permissions: {
+            publish: ["samma-io.scan", "samma-io.scan.>"]
+            subscribe: { deny: ">" }
+          }
+        }
+        {
+          user: "bridge"
+          password: $SAMMA_NATS_BRIDGE_PASSWORD
+          permissions: {
+            publish: { deny: ">" }
+            subscribe: ["samma-io.scan", "samma-io.scan.>"]
+          }
+        }
+      ]
+    }
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -413,9 +661,25 @@ spec:
       containers:
         - name: nats
           image: nats:2
+          args: ["--config", "/etc/nats/nats-server.conf"]
           ports:
             - containerPort: 4222
             - containerPort: 8222
+          env:
+            - name: SAMMA_NATS_SCANNER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: samma-nats-auth
+                  key: scanner-password
+            - name: SAMMA_NATS_BRIDGE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: samma-nats-auth
+                  key: bridge-password
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nats
+              readOnly: true
           resources:
             requests:
               cpu: 50m
@@ -423,6 +687,10 @@ spec:
             limits:
               cpu: 100m
               memory: 128Mi
+      volumes:
+        - name: config
+          configMap:
+            name: nats-config
 ---
 apiVersion: v1
 kind: Service
@@ -527,17 +795,57 @@ spec:
       serviceAccountName: samma-bridge
       nodeSelector:
         kubernetes.io/arch: amd64
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: samma-bridge
           image: sammascanner/bridge:latest
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: metrics
+              containerPort: 9100
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 30
           env:
+            - name: SAMMA_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: NATS_URL
               value: nats://nats:4222
             - name: NATS_SUBJECT
               value: samma-io.scan
+            - name: NATS_USER
+              value: bridge
+            - name: NATS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: samma-nats-auth
+                  key: bridge-password
             - name: DATABASE_URL
               value: postgresql://samma:samma@timescaledb:5432/samma
+            - name: SCANREPORTS_ENABLED
+              value: "true"
+            - name: METRICS_PORT
+              value: "9100"
           resources:
             requests:
               cpu: 50m
@@ -545,8 +853,113 @@ spec:
             limits:
               cpu: 200m
               memory: 256Mi
+---
+# Network policies (README, "Network policies"). Enforced only by a CNI that
+# implements NetworkPolicy. Keep in sync with
+# helm/samma-operator/templates/networkpolicies.yaml.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: samma-nats
+  namespace: samma-io
+spec:
+  podSelector:
+    matchLabels:
+      app: nats
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 4222
+          protocol: TCP
+        - port: 8222
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: samma-bridge
+  namespace: samma-io
+spec:
+  podSelector:
+    matchLabels:
+      app: samma-bridge
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: nats
+      ports:
+        - port: 4222
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: timescaledb
+      ports:
+        - port: 5432
+          protocol: TCP
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # The Kubernetes API server, which is not a pod: by port, to any address.
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+---
+# Scan pods: DNS, NATS and public addresses only. Remove the except lists
+# when SAMMA_ALLOW_PRIVATE_TARGETS is "true".
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: samma-scanners
+  namespace: samma-io
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/managed-by: samma-operator
+      samma.io/role: scanner
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: nats
+      ports:
+        - port: 4222
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+              - 127.0.0.0/8
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - fc00::/7
+              - fe80::/10
+              - ::1/128
 # Uninstall: the Helm chart runs operator/code/uninstall_cleanup.py from a
 # pre-delete hook. With the raw manifest, delete every Scanner first:
 #   kubectl -n samma-io delete scanner --all
-# Their Jobs and CronJobs follow through garbage collection; then
+# Their Jobs, CronJobs and ScanReports follow through garbage collection; then
 #   kubectl delete -f manifest/samma-operator.yaml

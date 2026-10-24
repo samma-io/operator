@@ -26,6 +26,7 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
 import jobspec
+import scanreport
 import target_policy
 from profile_resolver import resolve_profiles
 from scanqueue import ScanQueue, start_drainer
@@ -250,6 +251,92 @@ scan_queue = ScanQueue(
 _drainer_stop = threading.Event()
 
 
+# ---------------------------------------------------------------------------
+# Failed scan Jobs -> ScanReport status.lastRun
+# ---------------------------------------------------------------------------
+
+def record_job_outcomes():
+    """Runs on every queue tick. For each scan Job that failed (or hit its
+    deadline) and whose scanner has a ScanReport, write the outcome into
+    status.lastRun, creating the report with its spec when it is missing,
+    then annotate the Job so this happens once. See scanreport.py."""
+    jobs = batch1api.list_namespaced_job(NAMESPACE, label_selector=jobspec.LABEL_SCANNER).items
+    for job in jobs:
+        metadata = job.metadata.to_dict() if job.metadata is not None else {}
+        if scanreport.outcome_recorded(metadata):
+            continue
+        identity = scanreport.job_identity(metadata)
+        if identity is None:
+            continue
+        scanner, template, target = identity
+        if not scanreport.wants_report(scanner):
+            continue
+        status = job.status.to_dict() if job.status is not None else {}
+        result = scanreport.job_outcome(status)
+        if result is None:
+            continue
+        outcome, message, started_at, finished_at = result
+        job_name = metadata['name']
+        try:
+            run_id = job_pod_name(job_name) or job_name
+            write_failed_run(
+                scanner, template, target,
+                owners=scanreport.scanner_owners(metadata),
+                extra_labels=scanreport.ingress_labels(metadata),
+                run_id=run_id, job_name=job_name, outcome=outcome, message=message,
+                started_at=started_at, finished_at=finished_at,
+            )
+        except ApiException as exc:
+            logging.warning("Could not record the outcome of Job %s: %s", job_name, exc.reason)
+            continue
+        try:
+            merge_batch.patch_namespaced_job(job_name, NAMESPACE, {'metadata': {'annotations': {scanreport.ANNOTATION_OUTCOME_RECORDED: 'true'}}})
+        except ApiException as exc:
+            if exc.status != 404:
+                logging.warning("Could not annotate Job %s: %s", job_name, exc.reason)
+        logging.info("Recorded %s run of %s (%s) in ScanReport %s", outcome, scanner, target, scanreport.report_name(scanner, template, target))
+
+
+def job_pod_name(job_name):
+    """The pod the Job ran last, which is the run id the scanner itself
+    would have used (its hostname)."""
+    pods = api.list_namespaced_pod(NAMESPACE, label_selector="job-name={0}".format(job_name)).items
+    return scanreport.latest_pod_name([pod.metadata.to_dict() for pod in pods if pod.metadata is not None])
+
+
+def write_failed_run(scanner, template, target, owners, extra_labels, run_id, job_name, outcome, message, started_at, finished_at):
+    """Create the ScanReport when it is missing, then replace its status
+    with lastRun set, keeping findings and everything else. The replace
+    carries the resourceVersion read just before, so a bridge write in
+    between is a 409 and the loop reads again."""
+    name = scanreport.report_name(scanner, template, target)
+    for attempt in range(3):
+        try:
+            existing = k8sapi.get_namespaced_custom_object(scanreport.GROUP, scanreport.VERSION, NAMESPACE, scanreport.PLURAL, name)
+        except ApiException as exc:
+            if exc.status != 404:
+                raise
+            body = scanreport.report_body(scanner, template, target, NAMESPACE, owners=owners, extra_labels=extra_labels)
+            try:
+                existing = k8sapi.create_namespaced_custom_object(scanreport.GROUP, scanreport.VERSION, NAMESPACE, scanreport.PLURAL, body)
+                logging.info("Created ScanReport %s", name)
+            except ApiException as exc:
+                if exc.status != 409:
+                    raise
+                continue  # created by the bridge in the meantime; read it
+        current = existing.get('status') or {}
+        if scanreport.run_already_recorded(current, run_id):
+            return
+        existing['status'] = scanreport.failed_run_status(current, run_id, job_name, outcome, message, started_at, finished_at)
+        try:
+            k8sapi.replace_namespaced_custom_object_status(scanreport.GROUP, scanreport.VERSION, NAMESPACE, scanreport.PLURAL, name, existing)
+            return
+        except ApiException as exc:
+            if exc.status != 409:
+                raise
+    raise ApiException(status=409, reason="ScanReport {0} kept changing while its status was written".format(name))
+
+
 @kopf.on.startup()
 def configure(settings, **_):
     global _drainer_stop
@@ -259,10 +346,11 @@ def configure(settings, **_):
     if scanning is not None:
         scanning.disabled = True
     init_operator()
-    _, _drainer_stop = start_drainer(scan_queue, SETTINGS.queue_interval_seconds)
+    _, _drainer_stop = start_drainer(scan_queue, SETTINGS.queue_interval_seconds, on_tick=record_job_outcomes)
     logging.info(
-        "samma operator in namespace %s: max %d concurrent scans, deadline %ds, nmap raw sockets %s",
+        "samma operator in namespace %s: max %d concurrent scans, deadline %ds, nmap raw sockets %s, NATS credentials %s",
         NAMESPACE, SETTINGS.max_concurrent_scans, SETTINGS.scan_deadline_seconds, SETTINGS.nmap_raw_sockets,
+        "from Secret {0}".format(SETTINGS.nats_secret) if SETTINGS.nats_secret else "none",
     )
 
 

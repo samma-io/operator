@@ -9,6 +9,7 @@ dictionary body, and a dictionary is easy to unit test without a cluster.
 Everything the operator creates carries the same labels and annotations:
 
     app.kubernetes.io/managed-by: samma-operator
+    samma.io/role:               scanner (the NetworkPolicy for scan pods selects it)
     samma.io/scanner:            the scanner name, for example nmap
     samma.io/template:           the variant, for example port (nmap) or nikto
     samma.io/target-hash:        eight hex characters of sha256(target)
@@ -39,6 +40,8 @@ import target_policy
 # Labels and annotations.
 LABEL_MANAGED_BY = "app.kubernetes.io/managed-by"
 MANAGED_BY = "samma-operator"
+LABEL_ROLE = "samma.io/role"
+ROLE_SCANNER = "scanner"
 LABEL_SCANNER = "samma.io/scanner"
 LABEL_TEMPLATE = "samma.io/template"
 LABEL_TARGET_HASH = "samma.io/target-hash"
@@ -74,10 +77,25 @@ ENV_CPU_LIMIT = "SAMMA_SCANNER_CPU_LIMIT"
 ENV_MEMORY_LIMIT = "SAMMA_SCANNER_MEMORY_LIMIT"
 ENV_QUEUE_INTERVAL = "SAMMA_QUEUE_INTERVAL_SECONDS"
 ENV_DEFAULT_SCHEDULE = "SAMMA_IO_WEEKLY_SCHEDULE"
+# The Secret holding the NATS passwords (README, "NATS authentication") and
+# the user scanner pods log in as. Empty: scanner pods get no credentials,
+# which is what an unauthenticated NATS needs.
+ENV_NATS_SECRET = "SAMMA_NATS_SECRET"
+ENV_NATS_SCANNER_USER = "SAMMA_NATS_SCANNER_USER"
 
 DEFAULT_NAMESPACE = "samma-io"
 DEFAULT_SCANNER_SERVICE_ACCOUNT = "samma-scanner"
 DEFAULT_SCHEDULE = "0 0 * * 0"
+DEFAULT_NATS_SCANNER_USER = "scanner"
+# Key of the scanner password in the NATS Secret; the chart and the raw
+# manifest write the Secret with this key.
+NATS_SECRET_SCANNER_KEY = "scanner-password"
+# Environment variables of a scanner container that carry its NATS login.
+# NATS_URL is rewritten to nats://$(NATS_USER):$(NATS_PASSWORD)@host, which
+# the kubelet expands from the two variables defined before it; nats-py
+# reads the user and password from the URL.
+ENV_NATS_USER = "NATS_USER"
+ENV_NATS_PASSWORD = "NATS_PASSWORD"
 DEFAULT_RESOURCES = {
     "requests": {"cpu": "100m", "memory": "128Mi"},
     "limits": {"cpu": "1", "memory": "512Mi"},
@@ -118,6 +136,8 @@ class Settings(object):
         resources=None,
         queue_interval_seconds=15,
         default_schedule=DEFAULT_SCHEDULE,
+        nats_secret="",
+        nats_scanner_user=DEFAULT_NATS_SCANNER_USER,
     ):
         self.namespace = namespace
         self.scanner_service_account = scanner_service_account
@@ -133,6 +153,8 @@ class Settings(object):
         self.resources = resources or json.loads(json.dumps(DEFAULT_RESOURCES))
         self.queue_interval_seconds = queue_interval_seconds
         self.default_schedule = default_schedule
+        self.nats_secret = (nats_secret or "").strip()
+        self.nats_scanner_user = (nats_scanner_user or "").strip() or DEFAULT_NATS_SCANNER_USER
 
     @classmethod
     def from_env(cls, environ=None):
@@ -191,6 +213,8 @@ class Settings(object):
             resources=resources,
             queue_interval_seconds=number(ENV_QUEUE_INTERVAL, 15, minimum=1),
             default_schedule=text(ENV_DEFAULT_SCHEDULE, DEFAULT_SCHEDULE),
+            nats_secret=text(ENV_NATS_SECRET, ""),
+            nats_scanner_user=text(ENV_NATS_SCANNER_USER, DEFAULT_NATS_SCANNER_USER),
         )
 
 
@@ -221,11 +245,17 @@ class ScannerSpec(object):
         run_as_user=None,
         sidecars=None,
         volumes=None,
+        reports=False,
     ):
         self.name = name
         self.image = image
         self.variants = list(variants) if variants else [Variant(name)]
         self.env = dict(env or {})
+        # True for scanners that publish schema v2 messages (samma.io/scan/v2)
+        # and therefore have a ScanReport. The operator records a failed
+        # Job's outcome in the ScanReport only for these; the classic
+        # scanners still speak v1 and go to TimescaleDB only.
+        self.reports = bool(reports)
         # args(target) -> list, for scanners that take the target as an
         # argument rather than from the TARGET environment variable.
         self.args = args
@@ -302,9 +332,20 @@ DETECT_SCANNERS = (
     "whois-scanner",
 )
 
+# Extra environment per detect scanner. http-headers-scanner judges HSTS
+# only over HTTPS and its image defaults to HTTPS=False.
+DETECT_ENV = {
+    "http-headers-scanner": {"HTTPS": "True"},
+}
+
 SCANNERS = {}
 for _name in DETECT_SCANNERS:
-    SCANNERS[_name] = ScannerSpec(_name, "ghcr.io/samma-io/detect-{0}:latest".format(_name))
+    SCANNERS[_name] = ScannerSpec(
+        _name,
+        "ghcr.io/samma-io/detect-{0}:latest".format(_name),
+        env=DETECT_ENV.get(_name),
+        reports=True,
+    )
 
 SCANNERS["nikto"] = ScannerSpec("nikto", "sammascanner/nikto:v0.2", sudo=True)
 SCANNERS["nmap"] = ScannerSpec(
@@ -454,6 +495,27 @@ def scanner_env(spec_fields, defaults):
     return {k: str(v) for k, v in env.items()}
 
 
+def scanner_subject(base_subject, scanner):
+    """The NATS subject one scanner publishes on: <base>.<scanner>, so the
+    bridge can subscribe to <base>.> and tell publishers apart. An empty
+    base falls back to the historical samma-io.scan."""
+    base = (base_subject or "").strip().rstrip(".") or "samma-io.scan"
+    return "{0}.{1}".format(base, scanner)
+
+
+def nats_url_with_credentials(url):
+    """nats://host:4222 -> nats://$(NATS_USER):$(NATS_PASSWORD)@host:4222.
+
+    The kubelet expands $(NAME) references to variables defined earlier in
+    the container's env list. A URL that carries credentials already, or
+    one without a scheme, is returned unchanged."""
+    url = (url or "").strip()
+    scheme, sep, rest = url.partition("://")
+    if not sep or "@" in rest.split("/", 1)[0]:
+        return url
+    return "{0}://$({1}):$({2})@{3}".format(scheme, ENV_NATS_USER, ENV_NATS_PASSWORD, rest)
+
+
 def image_for(spec, settings):
     """The image reference for a scanner: an explicit override first, then
     the shared prefix (and tag) applied to the image's base name, then the
@@ -491,6 +553,7 @@ def _container_security_context(sudo, net_raw):
 def base_labels(spec, variant, target, scanner_uid=None, extra=None):
     labels = {
         LABEL_MANAGED_BY: MANAGED_BY,
+        LABEL_ROLE: ROLE_SCANNER,
         LABEL_SCANNER: spec.name,
         LABEL_TEMPLATE: variant.name,
         LABEL_TARGET_HASH: target_hash(target),
@@ -508,8 +571,20 @@ def build_container(spec, variant, target, env, settings):
         {"name": "TARGET", "value": target},
         {"name": "SAMMA_IO_SCANNER", "value": spec.name},
     ]
+    if settings.nats_secret:
+        # Defined before NATS_URL so the kubelet can expand them into it.
+        container_env.append({"name": ENV_NATS_USER, "value": settings.nats_scanner_user})
+        container_env.append({
+            "name": ENV_NATS_PASSWORD,
+            "valueFrom": {"secretKeyRef": {"name": settings.nats_secret, "key": NATS_SECRET_SCANNER_KEY}},
+        })
     for name, value in env.items():
-        container_env.append({"name": name, "value": str(value)})
+        value = str(value)
+        if name == "NATS_SUBJECT":
+            value = scanner_subject(value, spec.name)
+        elif name == "NATS_URL" and settings.nats_secret:
+            value = nats_url_with_credentials(value)
+        container_env.append({"name": name, "value": value})
     for name, value in spec.env.items():
         container_env.append({"name": name, "value": str(value)})
     if spec.raw_sockets:

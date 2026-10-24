@@ -93,6 +93,12 @@ spec:
               value: {{ .Values.scanners.resources.limits.cpu | quote }}
             - name: SAMMA_SCANNER_MEMORY_LIMIT
               value: {{ .Values.scanners.resources.limits.memory | quote }}
+            # NATS credentials for scanner pods (README, "NATS authentication").
+            # Empty means scanner pods connect without credentials.
+            - name: SAMMA_NATS_SECRET
+              value: {{ if .Values.nats.auth.enabled }}{{ .Values.nats.existingSecret | default "samma-nats-auth" | quote }}{{ else }}""{{ end }}
+            - name: SAMMA_NATS_SCANNER_USER
+              value: {{ .Values.nats.auth.scannerUser | quote }}
           resources:
             {{- toYaml .Values.operator.resources | nindent 12 }}
 ---

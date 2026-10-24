@@ -200,6 +200,36 @@ class DrainerTests(unittest.TestCase):
         thread.join(timeout=2)
         self.assertFalse(thread.is_alive())
 
+    def test_on_tick_runs_after_every_drain_and_its_errors_are_logged(self):
+        cluster = FakeCluster()
+        queue = scanqueue.ScanQueue(1, cluster.count_running, cluster.launch)
+        stop = threading.Event()
+        ticks = []
+
+        def on_tick():
+            ticks.append(len(cluster.running))
+            if len(ticks) == 1:
+                raise RuntimeError("apiserver hiccup")
+
+        def fake_sleep(seconds):
+            if len(ticks) == 3:
+                stop.set()
+            return stop.is_set()
+
+        queue.submit(key("j0"), job("j0"))
+        scanqueue.run_drainer(queue, 1, stop, sleep=fake_sleep, on_tick=on_tick)
+        self.assertEqual(ticks, [1, 1, 1])
+
+    def test_start_drainer_passes_on_tick(self):
+        cluster = FakeCluster()
+        queue = scanqueue.ScanQueue(1, cluster.count_running, cluster.launch)
+        seen = threading.Event()
+        thread, stop = scanqueue.start_drainer(queue, 0.01, on_tick=seen.set)
+        self.assertTrue(seen.wait(timeout=2))
+        stop.set()
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+
 
 if __name__ == "__main__":
     unittest.main()

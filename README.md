@@ -6,7 +6,8 @@
 
 Samma is a Kubernetes operator that deploys open-source security scanners into your cluster. When
 a scan target is registered, the operator immediately runs a one-time Job and schedules a weekly
-CronJob. Results are published to NATS and stored in TimescaleDB, and you read them in Grafana.
+CronJob. Results are published to NATS; the bridge writes them as `ScanReport` objects you can
+read with kubectl (see [Scan reports](#scan-reports)) and stores them in TimescaleDB for Grafana.
 
 The system has two components:
 
@@ -46,11 +47,12 @@ PUT /target  →  API creates Scanner CRDs  →  Operator watches CRDs
                                           │                     │
                                     Scanner Pod          CronJob Pod
                                           │
-                                        NATS (samma-io.scan)
+                                        NATS (samma-io.scan.<scanner>, authenticated)
                                           │
                                        Bridge
-                                          │
-                                     TimescaleDB
+                                       │     │
+                            ScanReport CRs   TimescaleDB
+                            (kubectl get sr)  (Grafana)
 ```
 
 ### Scanner types
@@ -216,6 +218,7 @@ The checks live in `operator/code/target_policy.py` and have unit tests in `oper
 
 ```bash
 python3 -m unittest discover -s operator/tests -t operator
+python3 -m unittest discover -s bridge/tests -t bridge
 ```
 
 ---
@@ -229,6 +232,7 @@ templates any more. Every object the operator creates carries these labels and a
 | Label or annotation | Value |
 |---|---|
 | `app.kubernetes.io/managed-by` | `samma-operator` |
+| `samma.io/role` | `scanner`; the [network policy](#network-policies) for scan pods selects it |
 | `samma.io/scanner` | the scanner, for example `nmap` |
 | `samma.io/template` | the variant, for example `port`; equal to the scanner name when it has one variant |
 | `samma.io/target-hash` | the first eight hex characters of `sha256(target)` |
@@ -314,14 +318,191 @@ The operator no longer binds to `cluster-admin`. Four ServiceAccounts are create
 
 | ServiceAccount | Rights |
 |---|---|
-| `samma-operator` | ClusterRole: Ingresses get, list, watch, patch (kopf writes its progress as annotations); `scanner.samma.io` full; `scanreports.samma.io` get, list, watch, create, update, patch (for the upcoming ScanReport resource); events create, patch; CustomResourceDefinitions list, watch. Role in the namespace: Jobs and CronJobs full; ConfigMaps get, list, watch, create, patch; Secrets get, list; Pods get, list. |
+| `samma-operator` | ClusterRole: Ingresses get, list, watch, patch (kopf writes its progress as annotations); `scanner.samma.io` full; `scanreports.samma.io` get, list, watch, create, update, patch (it records failed scan Jobs there, see [Scan reports](#scan-reports)); events create, patch; CustomResourceDefinitions list, watch. Role in the namespace: Jobs and CronJobs full; ConfigMaps get, list, watch, create, patch; Secrets get, list; Pods get, list. |
 | `samma-api` | Role: `scanner.samma.io` get, list, create, patch, delete; ConfigMaps get, list. |
-| `samma-bridge` | Role: `scanreports.samma.io` write, `scanner.samma.io` read. Unused until the bridge writes ScanReports. |
+| `samma-bridge` | Role: `scanreports.samma.io` get, list, watch, create, update, patch (it writes the reports); `scanner.samma.io` get, list, watch (it drops results for targets no Scanner has). |
 | `samma-scanner` | Nothing. Scanner pods run under it with no token mounted. |
 
 The operator runs in the namespace it is deployed to: `SAMMA_NAMESPACE` is set from the pod's
-own namespace through the Downward API, and the API reads the same variable. The raw manifest in
-`manifest/samma-operator.yaml` carries the same ServiceAccounts, roles and bindings.
+own namespace through the Downward API, and the API and the bridge read the same variable. The
+raw manifest in `manifest/samma-operator.yaml` carries the same ServiceAccounts, roles and bindings.
+
+---
+
+## Scan reports
+
+Every scan result is also a Kubernetes object: a `ScanReport` (`scanreports.samma.io/v1alpha1`,
+short name `sr`), one per scanner and target, in the operator's namespace. Nothing else is needed
+to read results, no database and no dashboard:
+
+```bash
+kubectl -n samma-io get scanreports
+NAME                   TARGET            SCANNER       OUTCOME     HIGH   LASTSUCCESS
+tls-scanner-d0c43d38   api.example.com   tls-scanner   succeeded   1      3m
+kubectl -n samma-io get sr tls-scanner-d0c43d38 -o yaml
+```
+
+A report has the same name as the scan Job, `<scanner>[-<template>]-<target hash>`, the same
+labels (`samma.io/scanner`, `samma.io/template`, `samma.io/target-hash`, and the Ingress labels
+when the target came from an Ingress), the target in the `samma.io/target` annotation, and the
+Scanners for that target and scanner as its owners, so it is garbage collected with them.
+
+```yaml
+apiVersion: samma.io/v1alpha1
+kind: ScanReport
+metadata:
+  name: tls-scanner-d0c43d38
+  namespace: samma-io
+  labels:
+    samma.io/scanner: tls-scanner
+    samma.io/template: tls-scanner
+    samma.io/target-hash: d0c43d38
+    samma.io/ingress-namespace: shop
+    samma.io/ingress-name: api
+  annotations:
+    samma.io/target: api.example.com
+  ownerReferences:
+    - apiVersion: samma.io/v1
+      kind: Scanner
+      name: tls-scanner-9c0ffee1
+spec:
+  target: api.example.com
+  scanner: tls-scanner
+status:
+  scannerVersion: "1.4.0"
+  lastRun:
+    runId: tls-scanner-d0c43d38-x7k2p      # the scanner pod
+    startedAt: "2026-10-15T02:00:04Z"
+    finishedAt: "2026-10-15T02:00:21Z"
+    outcome: succeeded                     # succeeded, failed or timed_out
+  lastSuccessAt: "2026-10-15T02:00:21Z"
+  summary: {critical: 0, high: 1, medium: 1, low: 0, info: 2}
+  findings:
+    - checkId: SAMMA-TLS-PROTOCOL-DEPRECATED
+      severity: HIGH
+      title: Deprecated TLS protocol version negotiated
+      endpoint: {host: api.example.com, port: 443, scheme: https}
+      evidence: negotiated TLSv1
+      remediation: Disable SSLv3, TLS 1.0 and TLS 1.1 in the ingress controller or server TLS options.
+      references: ["https://datatracker.ietf.org/doc/html/rfc8996"]
+      compliance: ["pci-dss:4.2.1"]
+```
+
+### How a report is written
+
+The bridge subscribes to NATS. The detect scanners publish messages in schema v2
+(`samma.io/scan/v2`, from [samma-io/detect](https://github.com/samma-io/detect)): one `finding`
+per failing check with a stable `checkId`, a `severity` (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`,
+`INFO`), the endpoint, a short `evidence` summary and a `remediation`, and exactly one `run`
+message at the end with the outcome. The bridge collects the findings of a run and, when the run
+message arrives:
+
+- **outcome `succeeded`:** the report's findings are replaced by this run's, `summary` is
+  recomputed and `lastSuccessAt` is set. A clean scan produces an empty list, which is how a
+  fixed finding disappears.
+- **outcome `failed` or `timed_out`:** only `lastRun` is written. The previous findings stay, so
+  a scan that could not run never looks like a scan that found nothing.
+
+A run message that reports more findings than the bridge received waits 30 seconds for the rest
+(`bridge.stragglerWaitSeconds`) and is then recorded as `failed` with the message
+`bridge received N of M findings`, for the same reason: an incomplete picture must not replace a
+complete one.
+
+Scan Jobs can also die before they send anything: an image that cannot be pulled, an out-of-memory
+kill, or the Job deadline hitting a pod that was still starting. The operator checks finished
+scan Jobs every queue tick and writes `lastRun` for the ones that failed (`outcome: failed`, or
+`timed_out` when the Job's condition reason is `DeadlineExceeded`), creating the report with only
+its `spec` when there is none yet. So a target that never had a successful scan still shows up,
+with the reason. Each Job is annotated `samma.io/outcome-recorded: "true"` once that is done.
+
+### What goes in, what stays out
+
+Messages are validated against the schema before anything is written (wrong types, unknown
+severities, malformed check ids and CVE ids are rejected and counted), and a message whose target
+is not the target of a current Scanner in the namespace is dropped. That means a pod that can
+reach NATS cannot plant findings for a host nobody asked to scan. Findings are deduplicated on
+check id plus endpoint, kept to 200 per report (highest severity first) and to 256 KiB serialised
+(evidence is shortened first, then `INFO` findings are dropped). Evidence is a summary of at most
+1 KiB; response bodies never enter a report. The scanner's raw record is not stored in the report
+either; it still goes to TimescaleDB.
+
+Only scanners that speak schema v2 get reports. Today those are the detect scanners; the classic
+scanners (`nmap`, `nikto`, `tsunami`) still publish v1 messages, which the bridge stores in
+TimescaleDB exactly as before and never turns into a report.
+
+The ScanReport CRD carries an OpenAPI schema with these limits, so a malformed report is refused
+by the API server. The bridge exposes Prometheus metrics on port 9100 (`/metrics`; messages
+received, rejected and dropped by reason, reports written by outcome, finalise latency) and
+readiness on `/readyz`. `bridge.scanReports=false` turns report writing off and
+`bridge.storeInTimescaleDB=false` removes the database connection; the bridge works with either
+one alone.
+
+---
+
+## NATS authentication
+
+NATS no longer accepts anonymous connections. The chart configures two users:
+
+| User | May | May not |
+|---|---|---|
+| `scanner` | publish on `samma-io.scan` and `samma-io.scan.>` | subscribe to anything |
+| `bridge` | subscribe to `samma-io.scan` and `samma-io.scan.>` | publish anything |
+
+Every scanner pod publishes on its own subject, `samma-io.scan.<scanner>`; the bridge listens to
+both the wildcard and the old plain subject, so scanners that still use `samma-io.scan` keep
+working.
+
+The passwords live in the Secret `samma-nats-auth` with the keys `scanner-password` and
+`bridge-password`. Scanner pods get `NATS_USER` and `NATS_PASSWORD` (from the Secret) and a
+`NATS_URL` of the form `nats://$(NATS_USER):$(NATS_PASSWORD)@nats:4222`, which the kubelet expands;
+the NATS client library reads the credentials from the URL, so no scanner image had to change. The
+bridge gets `NATS_USER` and `NATS_PASSWORD` too, and accepts a credentials file in `NATS_CREDS`
+instead when you point it at a NATS of your own. Passwords must be URL safe: the chart generates
+alphanumeric ones.
+
+Where the passwords come from, in order:
+
+1. `nats.existingSecret`: a Secret you manage, with the two keys above. The chart renders none.
+2. `nats.auth.scannerPassword` and `nats.auth.bridgePassword` set as values.
+3. The Secret already in the cluster, read back with Helm's `lookup`, so `helm upgrade` keeps
+   the passwords stable.
+4. Generated at install time.
+
+`helm template` and `helm install --dry-run` have no cluster to look in, so with 3 and 4 every
+render produces new passwords. That is a limitation of Helm's `lookup`, not drift: a GitOps tool
+that renders the chart itself (Argo CD, Flux's `helm template` mode) should use 1 or 2. The raw
+manifest ships the Secret with placeholder values that you must replace before applying.
+
+`nats.auth.enabled=false` restores the old unauthenticated NATS: no Secret, no credentials in any
+pod. The operator passes credentials to scanner pods only when `SAMMA_NATS_SECRET` names a Secret.
+
+---
+
+## Network policies
+
+The chart ships three NetworkPolicies (`networkPolicies.enabled`, default `true`; also in the raw
+manifest):
+
+| Policy | Selects | Allows |
+|---|---|---|
+| `samma-nats` | the NATS pod | ingress on 4222 and 8222 from pods in the release namespace only |
+| `samma-bridge` | the bridge | egress to NATS, TimescaleDB (while `bridge.storeInTimescaleDB` is on), DNS, and the Kubernetes API server |
+| `samma-scanners` | scan pods (`app.kubernetes.io/managed-by=samma-operator`, `samma.io/role=scanner`) | egress to DNS, NATS and public addresses only |
+
+"Public addresses only" means `0.0.0.0/0` except `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
+`100.64.0.0/10`, `169.254.0.0/16` and `127.0.0.0/8`, and `::/0` except `fc00::/7`, `fe80::/10`
+and `::1/128`. A scan pod therefore cannot be used to reach other pods, Services or nodes. When
+`config.allowPrivateTargets` is `"true"` (the same switch that lets a Scanner target a private
+address) the except lists are left out, and the scanners can reach the cluster network.
+
+The API server is not a pod, so the bridge's policy reaches it by port: 443 and 6443 to any
+address by default (`networkPolicies.apiServer.ports`). Set `networkPolicies.apiServer.cidrs` to
+restrict that to your control plane's addresses.
+
+A NetworkPolicy is only enforced by a CNI that implements it (Calico, Cilium, Antrea, kube-router,
+and most managed offerings do; Flannel on its own does not). Without such a CNI the objects are
+accepted and do nothing. Check with your cluster's documentation, or create a policy that denies
+everything in a test namespace and see whether it holds.
 
 ---
 
@@ -600,10 +781,28 @@ curl -X DELETE http://localhost:8080/scanner \
 | `SAMMA_SCANNER_IMAGE_PULL_POLICY` | unset | `imagePullPolicy` of scanner containers. |
 | `SAMMA_SCANNER_IMAGE_<NAME>` | unset | Full image reference for one scanner, for example `SAMMA_SCANNER_IMAGE_HTTP_HEADERS_SCANNER`. |
 | `SAMMA_SCANNER_CPU_REQUEST`, `SAMMA_SCANNER_MEMORY_REQUEST`, `SAMMA_SCANNER_CPU_LIMIT`, `SAMMA_SCANNER_MEMORY_LIMIT` | `100m`, `128Mi`, `1`, `512Mi` | Resources of every scanner container. |
+| `SAMMA_NATS_SECRET` | unset | Secret with the key `scanner-password`; scanner pods get `NATS_USER`, `NATS_PASSWORD` and a `NATS_URL` with credentials from it. Unset: no credentials. See [NATS authentication](#nats-authentication). |
+| `SAMMA_NATS_SCANNER_USER` | `scanner` | The NATS user scanner pods log in as. |
 
 ### API
 
 Same env vars as operator, plus the external API vars above.
+
+### Bridge
+
+| Variable | Default | Description |
+|---|---|---|
+| `NATS_URL` | `nats://nats:4222` | NATS server URL |
+| `NATS_SUBJECT` | `samma-io.scan` | Base subject; the bridge subscribes to it and to `<base>.>` |
+| `NATS_USER`, `NATS_PASSWORD` | unset | NATS credentials (the `bridge` user) |
+| `NATS_CREDS` | unset | Path to a NATS credentials file; wins over user and password |
+| `DATABASE_URL` | unset | TimescaleDB connection string. Empty: no database, ScanReports only |
+| `SAMMA_NAMESPACE` | `samma-io` | Where Scanners are listed and ScanReports written |
+| `SCANREPORTS_ENABLED` | `true` | `false` stores rows only and never touches the Kubernetes API |
+| `METRICS_PORT` | `9100` | Prometheus metrics, `/healthz` and `/readyz` |
+| `SCANNER_CACHE_SECONDS` | `30` | How long the list of Scanners is cached |
+| `STRAGGLER_WAIT_SECONDS` | `30` | How long a run waits for findings still in flight after its run message |
+| `RUN_IDLE_TIMEOUT_SECONDS` | `3600` | A run without a run message is dropped after this long |
 
 ---
 
@@ -720,6 +919,13 @@ kubectl delete namespace samma-io   # removes all data
 | `scanners.nmapRawSockets` | `false` | Give nmap `NET_RAW` for SYN scans |
 | `scanners.runAsUser` | `1000` | uid of scanner containers |
 | `hooks.preDeleteCleanup` | `true` | Pre-delete hook that removes every Scanner on uninstall |
+| `nats.auth.enabled` | `true` | NATS users with publish-only and subscribe-only rights, see [NATS authentication](#nats-authentication) |
+| `nats.existingSecret` | `""` | Your own Secret with `scanner-password` and `bridge-password` |
+| `nats.auth.scannerPassword`, `nats.auth.bridgePassword` | `""` | Fixed passwords; empty means kept from the cluster or generated |
+| `bridge.scanReports` | `true` | Write ScanReport objects, see [Scan reports](#scan-reports) |
+| `bridge.storeInTimescaleDB` | `true` | Insert every message into TimescaleDB |
+| `networkPolicies.enabled` | `true` | NetworkPolicies for NATS, the bridge and scan pods, see [Network policies](#network-policies) |
+| `networkPolicies.apiServer.ports`, `.cidrs` | `[443, 6443]`, `[]` | How the bridge may reach the API server |
 
 ---
 

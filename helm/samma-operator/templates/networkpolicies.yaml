@@ -1,0 +1,128 @@
+{{- if .Values.networkPolicies.enabled }}
+{{- /*
+Network policies (README, "Network policies"). They only take effect on a
+CNI that enforces NetworkPolicy; on one that does not, they are inert.
+
+  samma-nats      NATS accepts connections only from pods in this namespace.
+  samma-bridge    the bridge talks to NATS, the Kubernetes API, DNS and,
+                  when it stores rows, TimescaleDB; nothing else.
+  samma-scanners  scan pods reach DNS, NATS and public addresses only. The
+                  private, loopback, link-local and carrier-grade NAT
+                  ranges are excluded unless config.allowPrivateTargets is
+                  "true", which is also when the operator lets a Scanner
+                  point at such an address.
+*/ -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: samma-nats
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: nats
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 4222
+          protocol: TCP
+        - port: 8222
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: samma-bridge
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: samma-bridge
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: nats
+      ports:
+        - port: 4222
+          protocol: TCP
+    {{- if .Values.bridge.storeInTimescaleDB }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app: timescaledb
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- end }}
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # The Kubernetes API server. It is not a pod, so it is addressed by
+    # port (and by CIDR when networkPolicies.apiServer.cidrs is set).
+    - ports:
+        {{- range .Values.networkPolicies.apiServer.ports }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+      {{- with .Values.networkPolicies.apiServer.cidrs }}
+      to:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: samma-scanners
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/managed-by: samma-operator
+      samma.io/role: scanner
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: nats
+      ports:
+        - port: 4222
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            {{- if ne (toString .Values.config.allowPrivateTargets) "true" }}
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+              - 127.0.0.0/8
+            {{- end }}
+        - ipBlock:
+            cidr: ::/0
+            {{- if ne (toString .Values.config.allowPrivateTargets) "true" }}
+            except:
+              - fc00::/7
+              - fe80::/10
+              - ::1/128
+            {{- end }}
+{{- end }}

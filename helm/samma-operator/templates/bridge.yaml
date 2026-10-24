@@ -17,16 +17,66 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: samma-bridge
           image: {{ .Values.bridge.image }}:{{ .Values.bridge.tag }}
           imagePullPolicy: {{ .Values.bridge.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: metrics
+              containerPort: 9100
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 30
           env:
+            - name: SAMMA_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: NATS_URL
               value: {{ .Values.config.natsUrl | quote }}
             - name: NATS_SUBJECT
               value: {{ .Values.config.natsSubject | quote }}
+            {{- if .Values.nats.auth.enabled }}
+            - name: NATS_USER
+              value: {{ .Values.nats.auth.bridgeUser | quote }}
+            - name: NATS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.nats.existingSecret | default "samma-nats-auth" }}
+                  key: bridge-password
+            {{- end }}
             - name: DATABASE_URL
+              {{- if .Values.bridge.storeInTimescaleDB }}
               value: "postgresql://{{ .Values.timescaledb.user }}:{{ .Values.timescaledb.password }}@timescaledb:5432/{{ .Values.timescaledb.db }}"
+              {{- else }}
+              value: ""
+              {{- end }}
+            - name: SCANREPORTS_ENABLED
+              value: {{ .Values.bridge.scanReports | quote }}
+            - name: METRICS_PORT
+              value: "9100"
+            - name: SCANNER_CACHE_SECONDS
+              value: {{ .Values.bridge.scannerCacheSeconds | quote }}
+            - name: STRAGGLER_WAIT_SECONDS
+              value: {{ .Values.bridge.stragglerWaitSeconds | quote }}
           resources:
             {{- toYaml .Values.bridge.resources | nindent 12 }}

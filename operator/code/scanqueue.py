@@ -135,25 +135,33 @@ class ScanQueue(object):
         return [key for key, _ in launched]
 
 
-def run_drainer(queue, interval_seconds, stop_event, sleep=None):
+def run_drainer(queue, interval_seconds, stop_event, sleep=None, on_tick=None):
     """Call queue.drain() every interval_seconds until stop_event is set.
-    Meant to run in a daemon thread started by the operator at startup."""
+    Meant to run in a daemon thread started by the operator at startup.
+    on_tick, when given, runs after every drain (the operator records the
+    outcome of failed scan Jobs there); its errors are logged, not raised."""
     wait = stop_event.wait if sleep is None else sleep
     while not stop_event.is_set():
         try:
             queue.drain()
         except Exception as exc:
             queue.log.warning("Scan queue drain failed: %s", exc)
+        if on_tick is not None:
+            try:
+                on_tick()
+            except Exception as exc:
+                queue.log.warning("Scan queue tick hook failed: %s", exc)
         if wait(interval_seconds):
             break
 
 
-def start_drainer(queue, interval_seconds):
+def start_drainer(queue, interval_seconds, on_tick=None):
     """Start run_drainer in a daemon thread. Returns (thread, stop_event)."""
     stop_event = threading.Event()
     thread = threading.Thread(
         target=run_drainer,
         args=(queue, interval_seconds, stop_event),
+        kwargs={"on_tick": on_tick},
         name="samma-scan-queue",
         daemon=True,
     )
