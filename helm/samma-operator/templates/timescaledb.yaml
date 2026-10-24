@@ -32,7 +32,7 @@ spec:
       {{- end }}
       containers:
         - name: timescaledb
-          image: {{ .Values.timescaledb.image }}:{{ .Values.timescaledb.tag }}
+          image: {{ .Values.timescaledb.image }}:{{ .Values.timescaledb.tag }}{{ if .Values.timescaledb.digest }}@{{ .Values.timescaledb.digest }}{{ end }}
           env:
             - name: POSTGRES_DB
               value: {{ .Values.timescaledb.db | quote }}

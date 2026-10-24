@@ -18,7 +18,7 @@ spec:
       {{- end }}
       containers:
         - name: nats
-          image: {{ .Values.nats.image }}:{{ .Values.nats.tag }}
+          image: {{ .Values.nats.image }}:{{ .Values.nats.tag }}{{ if .Values.nats.digest }}@{{ .Values.nats.digest }}{{ end }}
           ports:
             - containerPort: 4222
             - containerPort: 8222
