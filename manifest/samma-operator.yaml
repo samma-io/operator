@@ -1,3 +1,11 @@
+# samma-operator 0.2.0, the same deployment as the Helm chart with its
+# defaults (helm/samma-operator), CRDs included. Releases attach a rendered
+# copy of this file.
+#
+# Set the three CHANGE-ME passwords before applying (NATS scanner and
+# bridge, TimescaleDB). Applying this manifest deploys an operator that
+# actively scans the hosts this cluster's Ingresses serve, and any target a
+# Scanner resource names. Only scan hosts you are allowed to scan.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -436,8 +444,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: samma-operator
-          image: mattiashem/samma-operator:latest
-          imagePullPolicy: Always
+          image: ghcr.io/samma-io/samma-operator:0.2.0
+          imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -493,7 +501,25 @@ spec:
             - name: SAMMA_SCANNER_IMAGE_TAG
               value: ""
             - name: SAMMA_SCANNER_IMAGE_PULL_POLICY
-              value: ""
+              value: "IfNotPresent"
+            # The detect scanners, pinned to the detect release this operator
+            # was tested with (the chart's scanners.detectTag).
+            - name: SAMMA_SCANNER_IMAGE_DNS_SCANNER
+              value: "ghcr.io/samma-io/detect-dns-scanner:2.0.0"
+            - name: SAMMA_SCANNER_IMAGE_HTTP_HEADERS_SCANNER
+              value: "ghcr.io/samma-io/detect-http-headers-scanner:2.0.0"
+            - name: SAMMA_SCANNER_IMAGE_HTTP_REDIRECT_SCANNER
+              value: "ghcr.io/samma-io/detect-http-redirect-scanner:2.0.0"
+            - name: SAMMA_SCANNER_IMAGE_PORT_SCANNER
+              value: "ghcr.io/samma-io/detect-port-scanner:2.0.0"
+            - name: SAMMA_SCANNER_IMAGE_SSH_BANNER_SCANNER
+              value: "ghcr.io/samma-io/detect-ssh-banner-scanner:2.0.0"
+            - name: SAMMA_SCANNER_IMAGE_TLS_SCANNER
+              value: "ghcr.io/samma-io/detect-tls-scanner:2.0.0"
+            - name: SAMMA_SCANNER_IMAGE_TRACEROUTE_SCANNER
+              value: "ghcr.io/samma-io/detect-traceroute-scanner:2.0.0"
+            - name: SAMMA_SCANNER_IMAGE_WHOIS_SCANNER
+              value: "ghcr.io/samma-io/detect-whois-scanner:2.0.0"
             - name: SAMMA_SCANNER_CPU_REQUEST
               value: "100m"
             - name: SAMMA_SCANNER_MEMORY_REQUEST
@@ -548,8 +574,8 @@ spec:
         kubernetes.io/arch: amd64
       containers:
         - name: samma-api
-          image: sammascanner/api:latest
-          imagePullPolicy: Always
+          image: ghcr.io/samma-io/samma-api:0.2.0
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 8080
@@ -661,6 +687,7 @@ spec:
       containers:
         - name: nats
           image: nats:2
+          imagePullPolicy: IfNotPresent
           args: ["--config", "/etc/nats/nats-server.conf"]
           ports:
             - containerPort: 4222
@@ -709,6 +736,17 @@ spec:
       targetPort: 8222
   type: ClusterIP
 ---
+# TimescaleDB password: SET IT BEFORE APPLYING (alphanumeric; it travels in
+# the bridge's DATABASE_URL). The value below is a placeholder.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: samma-timescaledb
+  namespace: samma-io
+type: Opaque
+stringData:
+  password: "CHANGE-ME-timescaledb-password"
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -739,13 +777,17 @@ spec:
       containers:
         - name: timescaledb
           image: timescale/timescaledb:latest-pg15
+          imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_DB
               value: samma
             - name: POSTGRES_USER
               value: samma
             - name: POSTGRES_PASSWORD
-              value: samma
+              valueFrom:
+                secretKeyRef:
+                  name: samma-timescaledb
+                  key: password
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
           ports:
@@ -801,8 +843,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: samma-bridge
-          image: sammascanner/bridge:latest
-          imagePullPolicy: Always
+          image: ghcr.io/samma-io/samma-bridge:0.2.0
+          imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -840,8 +882,15 @@ spec:
                 secretKeyRef:
                   name: samma-nats-auth
                   key: bridge-password
+            # The password stays in the Secret; the kubelet expands
+            # $(TIMESCALEDB_PASSWORD) into the URL.
+            - name: TIMESCALEDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: samma-timescaledb
+                  key: password
             - name: DATABASE_URL
-              value: postgresql://samma:samma@timescaledb:5432/samma
+              value: "postgresql://samma:$(TIMESCALEDB_PASSWORD)@timescaledb:5432/samma"
             - name: SCANREPORTS_ENABLED
               value: "true"
             - name: METRICS_PORT

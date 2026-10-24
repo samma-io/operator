@@ -1,13 +1,44 @@
 apiVersion: v2
 name: samma-operator
-description: Kubernetes operator for automated security scanning
+description: Kubernetes operator that runs security scanners against the hosts your Ingresses serve
 type: application
-version: 0.1.0
-appVersion: "latest"
+# version and appVersion move together: a release is a tag v<version>, and
+# the release workflow refuses a tag that does not match this file.
+version: 0.2.0
+appVersion: "0.2.0"
+kubeVersion: ">=1.25.0"
 home: https://samma.io
 sources:
   - https://github.com/samma-io/operator
+  - https://github.com/samma-io/detect
+maintainers:
+  - name: Mattias Hemmingsson
+    url: https://github.com/mattiashem
 keywords:
   - security
   - scanning
   - operator
+annotations:
+  artifacthub.io/operator: "true"
+  artifacthub.io/crds: |
+    - kind: Scanner
+      version: v1
+      name: scanner.samma.io
+      displayName: Scanner
+      description: One target and the scanners to run against it.
+    - kind: ScanReport
+      version: v1alpha1
+      name: scanreports.samma.io
+      displayName: ScanReport
+      description: The findings of one scanner against one target.
+  artifacthub.io/changes: |
+    - kind: changed
+      description: The chart is published to oci://ghcr.io/samma-io/charts; images are tagged with the release version and can be pinned by digest.
+    - kind: changed
+      description: CRDs moved to crds/ (installed first, never changed by helm upgrade).
+    - kind: added
+      description: acceptScanningTerms must be set to true before the chart renders the operator.
+    - kind: added
+      description: api.enabled and timescaledb.enabled; the bridge gets no database when TimescaleDB is off.
+    - kind: removed
+      description: The default TimescaleDB password. Set timescaledb.password or timescaledb.existingSecret.

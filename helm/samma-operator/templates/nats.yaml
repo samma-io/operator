@@ -1,3 +1,4 @@
+{{- include "samma.consentGate" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,7 +22,8 @@ spec:
       {{- end }}
       containers:
         - name: nats
-          image: {{ .Values.nats.image }}:{{ .Values.nats.tag }}
+          image: {{ include "samma.image" (dict "spec" .Values.nats "chart" .Chart) }}
+          imagePullPolicy: {{ .Values.nats.pullPolicy }}
           args: ["--config", "/etc/nats/nats-server.conf"]
           ports:
             - containerPort: 4222

@@ -1,3 +1,19 @@
+{{- if .Values.timescaledb.enabled }}
+{{- include "samma.consentGate" . -}}
+{{- if not (or .Values.timescaledb.password .Values.timescaledb.existingSecret) }}
+{{- fail "\n\ntimescaledb.enabled is true but no password is set. The chart has no default password any more. Either\n\n  --set timescaledb.password=<alphanumeric password>\n\nor create a Secret with the key \"password\" and name it in timescaledb.existingSecret, or turn the database off with timescaledb.enabled=false (the bridge then writes ScanReports only).\n" }}
+{{- end }}
+{{- if not .Values.timescaledb.existingSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: samma-timescaledb
+  namespace: {{ .Values.namespace }}
+type: Opaque
+stringData:
+  password: {{ .Values.timescaledb.password | quote }}
+---
+{{- end }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -32,14 +48,18 @@ spec:
       {{- end }}
       containers:
         - name: timescaledb
-          image: {{ .Values.timescaledb.image }}:{{ .Values.timescaledb.tag }}
+          image: {{ include "samma.image" (dict "spec" .Values.timescaledb "chart" .Chart) }}
+          imagePullPolicy: {{ .Values.timescaledb.pullPolicy }}
           env:
             - name: POSTGRES_DB
               value: {{ .Values.timescaledb.db | quote }}
             - name: POSTGRES_USER
               value: {{ .Values.timescaledb.user | quote }}
             - name: POSTGRES_PASSWORD
-              value: {{ .Values.timescaledb.password | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "samma.timescaledbSecret" . }}
+                  key: password
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
           ports:
@@ -66,3 +86,4 @@ spec:
     - port: 5432
       targetPort: 5432
   type: ClusterIP
+{{- end }}

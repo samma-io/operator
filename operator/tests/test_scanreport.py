@@ -25,7 +25,7 @@ from samma_bridge import messages as bridge_messages  # noqa: E402
 from samma_bridge import reports as bridge_reports  # noqa: E402
 
 CRD_FILES = [
-    os.path.join(REPO_DIR, "helm", "samma-operator", "templates", "crd-scanreport.yaml"),
+    os.path.join(REPO_DIR, "helm", "samma-operator", "crds", "scanreports.samma.io.yaml"),
     os.path.join(REPO_DIR, "manifest", "samma-operator.yaml"),
 ]
 

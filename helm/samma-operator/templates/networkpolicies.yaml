@@ -51,7 +51,7 @@ spec:
       ports:
         - port: 4222
           protocol: TCP
-    {{- if .Values.bridge.storeInTimescaleDB }}
+    {{- if include "samma.storeInTimescaleDB" . }}
     - to:
         - podSelector:
             matchLabels:

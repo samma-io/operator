@@ -1,3 +1,4 @@
+{{- include "samma.consentGate" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -23,7 +24,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: samma-bridge
-          image: {{ .Values.bridge.image }}:{{ .Values.bridge.tag }}
+          image: {{ include "samma.image" (dict "spec" .Values.bridge "chart" .Chart) }}
           imagePullPolicy: {{ .Values.bridge.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
@@ -64,12 +65,21 @@ spec:
                   name: {{ .Values.nats.existingSecret | default "samma-nats-auth" }}
                   key: bridge-password
             {{- end }}
+            {{- if include "samma.storeInTimescaleDB" . }}
+            # The password stays in the Secret; the kubelet expands
+            # $(TIMESCALEDB_PASSWORD) into the URL.
+            - name: TIMESCALEDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "samma.timescaledbSecret" . }}
+                  key: password
             - name: DATABASE_URL
-              {{- if .Values.bridge.storeInTimescaleDB }}
-              value: "postgresql://{{ .Values.timescaledb.user }}:{{ .Values.timescaledb.password }}@timescaledb:5432/{{ .Values.timescaledb.db }}"
-              {{- else }}
+              value: "postgresql://{{ .Values.timescaledb.user }}:$(TIMESCALEDB_PASSWORD)@timescaledb:5432/{{ .Values.timescaledb.db }}"
+            {{- else }}
+            # No TimescaleDB: ScanReports only.
+            - name: DATABASE_URL
               value: ""
-              {{- end }}
+            {{- end }}
             - name: SCANREPORTS_ENABLED
               value: {{ .Values.bridge.scanReports | quote }}
             - name: METRICS_PORT

@@ -31,7 +31,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: cleanup
-          image: {{ .Values.operator.image }}:{{ .Values.operator.tag }}
+          image: {{ include "samma.image" (dict "spec" .Values.operator "chart" .Chart) }}
           imagePullPolicy: {{ .Values.operator.pullPolicy }}
           command: ["python3", "/code/uninstall_cleanup.py"]
           securityContext:

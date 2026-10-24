@@ -27,13 +27,13 @@ The operator also watches Ingress resources: if an Ingress has `samma-io.alpha.k
 
 There are no YAML templates. `SCANNERS` maps a scanner name to a `ScannerSpec`:
 
-**detect** (`port-scanner`, `dns-scanner`, `http-headers-scanner`, `tls-scanner`, `http-redirect-scanner`, `traceroute-scanner`, `ssh-banner-scanner`, `whois-scanner`): `ghcr.io/samma-io/detect-*:latest`, one variant named after the scanner, no command (the image's entrypoint runs), results published to NATS in schema v2 (`reports=True`: they have ScanReports). `http-headers-scanner` gets `HTTPS=True` (`DETECT_ENV`) because it judges HSTS only over HTTPS.
+**detect** (`port-scanner`, `dns-scanner`, `http-headers-scanner`, `tls-scanner`, `http-redirect-scanner`, `traceroute-scanner`, `ssh-banner-scanner`, `whois-scanner`): `ghcr.io/samma-io/detect-*` (the table's own default tag is `latest`; the chart and the raw manifest pin them to the detect release `scanners.detectTag`, `2.0.0`, through `SAMMA_SCANNER_IMAGE_<NAME>`), one variant named after the scanner, no command (the image's entrypoint runs), results published to NATS in schema v2 (`reports=True`: they have ScanReports). `http-headers-scanner` gets `HTTPS=True` (`DETECT_ENV`) because it judges HSTS only over HTTPS.
 
 **classic** (`nikto`, `nmap`, `tsunami`, `base`): `sammascanner/*` images. nmap has three variants (`port`, `http`, `tls`) with their own `command`; `nikto` and `nmap` have `sudo=True` because the images call sudo, which keeps `allowPrivilegeEscalation: true` for them; nmap has `raw_sockets=True` and gets `NET_RAW` plus `NMAP_PRIVILEGED=1` only when `SAMMA_NMAP_RAW_SOCKETS=true`, otherwise `NMAP_UNPRIVILEGED=1`. tsunami takes the target as an argument (`--ip-v4-target`, `--ip-v6-target` or `--hostname-target`, decided with `target_policy.parse_ip_literal`). `base` keeps its filebeat sidecar and the `filebeat` and `live` ConfigMaps; `operator/code/scanners/core/` holds those two ConfigMaps and nothing else.
 
 Every scanner container gets `TARGET`, `SAMMA_IO_SCANNER`, the Scanner's env (see `scanner_env`) with `NATS_SUBJECT` rewritten to `<base>.<scanner>`, and, when `SAMMA_NATS_SECRET` is set, `NATS_USER`, `NATS_PASSWORD` (secretKeyRef, key `scanner-password`) before a `NATS_URL` carrying `$(NATS_USER):$(NATS_PASSWORD)@`. Pods run with `drop: [ALL]`, `readOnlyRootFilesystem` with emptyDirs at `/out` and `/tmp`, `runAsNonRoot`, seccomp `RuntimeDefault`, resources from the settings, the `samma-scanner` ServiceAccount and no mounted token, and carry the label `samma.io/role: scanner` that the scanner NetworkPolicy selects. Jobs: `backoffLimit: 1`, `activeDeadlineSeconds`, `ttlSecondsAfterFinished`, an `ownerReference` to the Scanner. CronJobs: `concurrencyPolicy: Forbid`, history limits 1, `startingDeadlineSeconds: 600`, a `samma.io/spec-hash` annotation.
 
-Image references: `SAMMA_SCANNER_IMAGE_<NAME>` (full reference, `-` as `_`), else `SAMMA_SCANNER_IMAGE_PREFIX` plus the image base name and `SAMMA_SCANNER_IMAGE_TAG`, else the table default. The chart maps `scanners.images`, `scanners.imagePrefix` and `scanners.imageTag` to these.
+Image references: `SAMMA_SCANNER_IMAGE_<NAME>` (full reference, `-` as `_`), else `SAMMA_SCANNER_IMAGE_PREFIX` plus the image base name and `SAMMA_SCANNER_IMAGE_TAG`, else the table default. The chart maps `scanners.images`, `scanners.imagePrefix` and `scanners.imageTag` to these, and renders one `SAMMA_SCANNER_IMAGE_<NAME>` per name in `scanners.detectScanners` as `<imagePrefix, else ghcr.io/samma-io>/detect-<name>:<imageTag, else detectTag>` unless `scanners.images` names that scanner (`templates/operator.yaml`).
 
 Adding a scanner: add a `ScannerSpec` to `SCANNERS`, add it to the profiles in `init_operator()`, extend `operator/tests/test_jobspec.py`. `/add-scanner` in `.claude/commands/` walks through it.
 
@@ -92,7 +92,7 @@ TimescaleDB (`DATABASE_URL`, empty for none) keeps the `scan_results` hypertable
 
 ### ScanReport CRD
 
-`scanreports.samma.io/v1alpha1`, namespaced, short name `sr`, status subresource, printer columns target, scanner, outcome, high, lastSuccess. `spec` {target (same pattern as Scanner), scanner, template?, tier?}; `status` {scannerVersion, lastRun {runId, jobName?, startedAt, finishedAt, outcome succeeded|failed|timed_out, message <= 512}, lastSuccessAt, summary {critical, high, medium, low, info}, findings (<= 200) [{checkId `^[A-Z0-9-]{3,80}$`, severity CRITICAL|HIGH|MEDIUM|LOW|INFO, title <= 200, endpoint {host, port, scheme}, evidence <= 1024, remediation <= 1024, references <= 10, cveIds `^CVE-\d{4}-\d{4,}$`, compliance <= 20}]}. No raw scanner record. The two copies in `helm/samma-operator/templates/crd-scanreport.yaml` and `manifest/samma-operator.yaml` must stay identical; `operator/tests/test_scanreport.py` and `bridge/tests/test_reports.py` compare them and check the limits against the bridge constants.
+`scanreports.samma.io/v1alpha1`, namespaced, short name `sr`, status subresource, printer columns target, scanner, outcome, high, lastSuccess. `spec` {target (same pattern as Scanner), scanner, template?, tier?}; `status` {scannerVersion, lastRun {runId, jobName?, startedAt, finishedAt, outcome succeeded|failed|timed_out, message <= 512}, lastSuccessAt, summary {critical, high, medium, low, info}, findings (<= 200) [{checkId `^[A-Z0-9-]{3,80}$`, severity CRITICAL|HIGH|MEDIUM|LOW|INFO, title <= 200, endpoint {host, port, scheme}, evidence <= 1024, remediation <= 1024, references <= 10, cveIds `^CVE-\d{4}-\d{4,}$`, compliance <= 20}]}. No raw scanner record. The two copies in `helm/samma-operator/crds/scanreports.samma.io.yaml` and `manifest/samma-operator.yaml` must stay identical; `operator/tests/test_scanreport.py` and `bridge/tests/test_reports.py` compare them and check the limits against the bridge constants.
 
 ### Network policies
 
@@ -102,8 +102,18 @@ TimescaleDB (`DATABASE_URL`, empty for none) keeps the `scan_results` hypertable
 
 Four ServiceAccounts: `samma-operator` (ClusterRole: Ingresses get/list/watch/patch, `scanner.samma.io` full, `scanreports.samma.io` read and write, events create/patch, CRDs list/watch; Role in the namespace: Jobs and CronJobs full, ConfigMaps get/list/watch/create/patch, Secrets get/list, Pods get/list), `samma-api` (Role: Scanners get/list/create/patch/delete, ConfigMaps get/list), `samma-bridge` (Role: ScanReports get/list/watch/create/update/patch, Scanners get/list/watch) and `samma-scanner` (nothing; scanner pods). `helm/samma-operator/templates/rbac.yaml` and `manifest/samma-operator.yaml` must stay identical in content. The namespace comes from `SAMMA_NAMESPACE`, set from the Downward API in the chart and the manifest.
 
+### Helm chart (`helm/samma-operator/`)
+
+Published as OCI to `oci://ghcr.io/samma-io/charts/samma-operator` by the release workflow; `Chart.yaml` `version` and `appVersion` are the release and must equal the tag (`v<version>`). Points that are easy to break:
+
+- `crds/` holds the two CRDs (`scanner.samma.io.yaml`, `scanreports.samma.io.yaml`): Helm installs them before the templates and never upgrades them (README, "Upgrading"). They contain no template syntax. `helm template` prints them only with `--include-crds`.
+- `templates/_helpers.tpl`: `samma.image` renders `image@sha256:...` when `digest` is set, else `image:<tag, else .Chart.AppVersion>`; `samma.consentGate` calls `fail` while `acceptScanningTerms` is false and is included at the top of every workload template (operator, api, bridge, nats, timescaledb), so the consent error is the first one whatever order Helm renders in (`helm lint` ignores `fail`, so lint passes with defaults). `samma.storeInTimescaleDB` is true only when `timescaledb.enabled` and `bridge.storeInTimescaleDB` both are; `samma.timescaledbSecret` is `timescaledb.existingSecret` or `samma-timescaledb`.
+- `api.enabled` gates `api.yaml` and the API ServiceAccount, Role and RoleBinding in `rbac.yaml`. `timescaledb.enabled` gates `timescaledb.yaml` (Secret, PVC, Deployment, Service), the bridge's `DATABASE_URL` (built from `$(TIMESCALEDB_PASSWORD)`, a secretKeyRef, so the password never appears in a Deployment) and the bridge NetworkPolicy's egress rule to it. `timescaledb.yaml` fails the render when enabled without `password` or `existingSecret`; there is no default password.
+- Every image block has `image`, `tag`, `digest`, `pullPolicy` (`IfNotPresent`); `operator.image` is `ghcr.io/samma-io/samma-operator`, likewise `samma-api` and `samma-bridge`. Release notes carry the digests.
+- With defaults, `helm template` renders 30 objects (32 with `--include-crds`); with `api.enabled=false,timescaledb.enabled=false` it renders 21.
+
 ### CRD & Manifests (`manifest/`)
-- `manifest/samma-operator.yaml` — Full cluster deployment: namespace, the Scanner and ScanReport CRDs, ServiceAccounts, ClusterRole, Roles and bindings, operator Deployment + Service (8080), API Deployment + Service (8080), the NATS Secret (placeholder passwords, set them) + ConfigMap + Deployment + Service (4222/8222), TimescaleDB PVC + Deployment + Service (5432), Bridge Deployment (metrics 9100), three NetworkPolicies. No Helm hook: delete the Scanners by hand before deleting the manifest.
+- `manifest/samma-operator.yaml`: the chart with its defaults as plain YAML, kept by hand: namespace, the Scanner and ScanReport CRDs (identical to `helm/samma-operator/crds/`), ServiceAccounts, ClusterRole, Roles and bindings, operator Deployment + Service (8080), API Deployment + Service (8080), the NATS Secret (placeholder passwords, set them) + ConfigMap + Deployment + Service (4222/8222), the TimescaleDB Secret (placeholder password) + PVC + Deployment + Service (5432), Bridge Deployment (metrics 9100), three NetworkPolicies. Images are the release's pinned ones (`ghcr.io/samma-io/samma-*:<version>`, detect scanners through `SAMMA_SCANNER_IMAGE_*`); bump them with `Chart.yaml`. No Helm hook: delete the Scanners by hand before deleting the manifest. No consent switch: the header says applying it is the acceptance. Releases attach a rendered copy (`samma-operator-<version>.yaml`).
 - `manifest/test/` — Example Scanner CRDs for testing.
 
 ## Build & Development Commands
@@ -126,16 +136,10 @@ kubectl apply -f manifest/samma-operator.yaml
 kubectl apply -f manifest/test/nmap.yaml
 ```
 
-### Building and pushing images (production)
-```bash
-docker build --platform linux/amd64 -t mattiashem/samma-operator:latest ./operator/
-docker push mattiashem/samma-operator:latest
-kubectl rollout restart deployment/samma-operator -n samma-io
+### Releases (images and chart)
+Nothing is built or pushed by hand. A release is a tag `v<version>` on `main` with `version` and `appVersion` in `helm/samma-operator/Chart.yaml` equal to `<version>`, a `CHANGELOG.md` entry, and the pinned images in `manifest/samma-operator.yaml` bumped. `.github/workflows/release.yaml` then verifies the tag against `Chart.yaml`, runs the unit tests and `helm lint`, builds `operator/`, `api/` and `bridge/` for linux/amd64 and linux/arm64 as `ghcr.io/<owner>/samma-<component>:<version>` and `:<version>-<short sha>` (never `latest`), packages and pushes the chart to `oci://ghcr.io/<owner>/charts`, renders the raw manifest with placeholder passwords, and creates the GitHub release (or adds to one created by hand) with the chart archive, the manifest and every image digest. A new GHCR package is private until its visibility is set once. The detect scanner images come from samma-io/detect's own release workflow; bump `scanners.detectTag` (values.yaml, README, manifest) to move to a new one.
 
-docker build --platform linux/amd64 -t sammascanner/api:beta ./api/
-docker push sammascanner/api:beta
-kubectl rollout restart deployment/samma-api -n samma-io
-```
+For a development build, push an image of your own and point the chart at it (`operator.image`/`operator.tag`, README "Build & push images").
 
 ### Patching the scanner-profiles ConfigMap
 `initOperator` only creates the ConfigMap on first run. For running clusters, add profiles manually:
@@ -155,7 +159,8 @@ No cluster, network, nats-py, asyncpg or kubernetes client needed: DNS and the I
 Open in VS Code → "Reopen in Container". Provides Python 3.12, kubectl, helm, skaffold, k3d, Docker-in-Docker. Post-create script installs dependencies and creates a local k3d cluster.
 
 ### CI/CD (GitHub Actions)
-`.github/workflows/build.yaml` — builds `operator/` and `api/` images on push/PR to `main`. Pushes to `ghcr.io/<owner>/samma-operator` and `ghcr.io/<owner>/samma-api` tagged with git SHA and `latest`.
+`.github/workflows/build.yaml`: runs the unit tests and `helm lint`, then builds the `operator/`, `api/` and `bridge/` images on push and PR to `main`. Pushes (push only, never from a PR) to `ghcr.io/<owner>/samma-operator`, `samma-api` and `samma-bridge` tagged with the git SHA and `latest`.
+`.github/workflows/release.yaml`: on tags `v*`, see "Releases (images and chart)" above.
 
 ## Key Concepts
 

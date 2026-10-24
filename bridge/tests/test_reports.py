@@ -9,7 +9,7 @@ from .helpers import REPO_DIR, TARGET, FakeStore, finding, run, scanner_object  
 from samma_bridge import messages, reports
 
 CRD_FILES = [
-    os.path.join(REPO_DIR, "helm", "samma-operator", "templates", "crd-scanreport.yaml"),
+    os.path.join(REPO_DIR, "helm", "samma-operator", "crds", "scanreports.samma.io.yaml"),
     os.path.join(REPO_DIR, "manifest", "samma-operator.yaml"),
 ]
 

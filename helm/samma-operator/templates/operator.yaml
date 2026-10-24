@@ -1,3 +1,4 @@
+{{- include "samma.consentGate" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -23,7 +24,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: samma-operator
-          image: {{ .Values.operator.image }}:{{ .Values.operator.tag }}
+          image: {{ include "samma.image" (dict "spec" .Values.operator "chart" .Chart) }}
           imagePullPolicy: {{ .Values.operator.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
@@ -81,6 +82,20 @@ spec:
               value: {{ .Values.scanners.imageTag | quote }}
             - name: SAMMA_SCANNER_IMAGE_PULL_POLICY
               value: {{ .Values.scanners.pullPolicy | quote }}
+            {{- /*
+            The detect scanners are pinned to scanners.detectTag (README,
+            "Scanner types"): every detect scanner without an entry in
+            scanners.images gets a full reference here. imagePrefix and
+            imageTag still apply, so a mirror works the same way for them.
+            */}}
+            {{- $registry := .Values.scanners.imagePrefix | default "ghcr.io/samma-io" | trimSuffix "/" }}
+            {{- $detectTag := .Values.scanners.imageTag | default .Values.scanners.detectTag }}
+            {{- range $name := .Values.scanners.detectScanners }}
+            {{- if not (hasKey $.Values.scanners.images $name) }}
+            - name: SAMMA_SCANNER_IMAGE_{{ $name | upper | replace "-" "_" }}
+              value: {{ printf "%s/detect-%s:%s" $registry $name $detectTag | quote }}
+            {{- end }}
+            {{- end }}
             {{- range $name, $image := .Values.scanners.images }}
             - name: SAMMA_SCANNER_IMAGE_{{ $name | upper | replace "-" "_" }}
               value: {{ $image | quote }}

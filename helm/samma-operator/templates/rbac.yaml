@@ -79,6 +79,7 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Values.serviceAccounts.operator }}
     namespace: {{ .Values.namespace }}
+{{- if .Values.api.enabled }}
 ---
 # The REST API creates, lists and deletes Scanners and reads the
 # scanner-profiles ConfigMap, all in this namespace.
@@ -114,10 +115,10 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Values.serviceAccounts.api }}
     namespace: {{ .Values.namespace }}
+{{- end }}
 ---
-# The bridge will write ScanReports and check incoming results against the
-# Scanners that exist. It uses none of this yet; the rights are in place for
-# that change.
+# The bridge writes ScanReports and checks incoming results against the
+# Scanners that exist.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

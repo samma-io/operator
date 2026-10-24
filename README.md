@@ -59,30 +59,35 @@ PUT /target  →  API creates Scanner CRDs  →  Operator watches CRDs
 
 There are two scanner families:
 
-**detect** — Modern scanners (`ghcr.io/samma-io/detect-*:latest`). Single container, results published directly to NATS.
+**detect**: the modern scanners (`ghcr.io/samma-io/detect-*`, from
+[samma-io/detect](https://github.com/samma-io/detect)). Single container, results published
+directly to NATS in schema v2, so they have [ScanReports](#scan-reports).
 
-The images below are the defaults built into `operator/code/jobspec.py`. Point them at your own
-registry with the `scanners.imagePrefix`, `scanners.imageTag` and `scanners.images` Helm values
-(see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs)).
+The detect scanners are released together, and the chart pins all of them to one tag,
+`scanners.detectTag` (default `2.0.0`, the detect release this operator was tested with). Point
+them at a mirror with `scanners.imagePrefix` (and `scanners.imageTag`), or pin one scanner to a
+tag or a digest with `scanners.images.<scanner>` (see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs)).
 
 | Scanner | Image |
 |---|---|
-| `port-scanner` | `ghcr.io/samma-io/detect-port-scanner:latest` |
-| `dns-scanner` | `ghcr.io/samma-io/detect-dns-scanner:latest` |
-| `http-headers-scanner` | `ghcr.io/samma-io/detect-http-headers-scanner:latest` |
-| `tls-scanner` | `ghcr.io/samma-io/detect-tls-scanner:latest` |
-| `http-redirect-scanner` | `ghcr.io/samma-io/detect-http-redirect-scanner:latest` |
-| `traceroute-scanner` | `ghcr.io/samma-io/detect-traceroute-scanner:latest` |
-| `ssh-banner-scanner` | `ghcr.io/samma-io/detect-ssh-banner-scanner:latest` |
-| `whois-scanner` | `ghcr.io/samma-io/detect-whois-scanner:latest` |
+| `port-scanner` | `ghcr.io/samma-io/detect-port-scanner:2.0.0` |
+| `dns-scanner` | `ghcr.io/samma-io/detect-dns-scanner:2.0.0` |
+| `http-headers-scanner` | `ghcr.io/samma-io/detect-http-headers-scanner:2.0.0` |
+| `tls-scanner` | `ghcr.io/samma-io/detect-tls-scanner:2.0.0` |
+| `http-redirect-scanner` | `ghcr.io/samma-io/detect-http-redirect-scanner:2.0.0` |
+| `traceroute-scanner` | `ghcr.io/samma-io/detect-traceroute-scanner:2.0.0` |
+| `ssh-banner-scanner` | `ghcr.io/samma-io/detect-ssh-banner-scanner:2.0.0` |
+| `whois-scanner` | `ghcr.io/samma-io/detect-whois-scanner:2.0.0` |
 
-**classic** — Traditional scanners (`sammascanner/*`). Single container, NATS vars passed through env.
+**classic**: the traditional scanners (`sammascanner/*`). Single container, NATS vars passed
+through env. Their image references are the defaults built into `operator/code/jobspec.py`; they
+move to rebuilt, pinned images in a later release.
 
 | Scanner | Image | Templates |
 |---|---|---|
-| `nikto` | `sammascanner/nikto:v0.2` | — |
+| `nikto` | `sammascanner/nikto:v0.2` | none |
 | `nmap` | `sammascanner/nmap:v0.2` | `port`, `http`, `tls` |
-| `tsunami` | `sammascanner/tsunami:v0.1` | — |
+| `tsunami` | `sammascanner/tsunami:v0.1` | none |
 
 ---
 
@@ -808,25 +813,143 @@ Same env vars as operator, plus the external API vars above.
 
 ## Deploying the operator
 
+### Before you install
+
+The operator scans hosts. Once installed, it runs security scanners from inside the cluster
+against every host of an Ingress you annotate, and against any target a `Scanner` resource names.
+Only scan hosts you own or are allowed to test: scanning other people's hosts may break the law or
+your provider's terms of service. The chart will not render the operator until you say so with
+`acceptScanningTerms=true`.
+
 ### Prerequisites
 
-- Kubernetes cluster (1.21+)
+- Kubernetes 1.25 or newer
 - `kubectl` configured against the cluster
-- Helm 3 (for Helm install)
+- Helm 3.8 or newer (OCI registries) for the chart install
 
 ---
 
-### Option 1 — Raw manifest (quickest)
+### Option 1: Helm chart (recommended)
 
-Deploys everything into the `samma-io` namespace with default settings.
+The chart is published to `oci://ghcr.io/samma-io/charts/samma-operator`. Every release pins its
+own images: the chart's `appVersion` is the tag of the operator, API and bridge images, and
+`scanners.detectTag` is the tag of the detect scanner images.
 
 ```bash
-kubectl apply -f manifest/samma-operator.yaml
+helm install samma oci://ghcr.io/samma-io/charts/samma-operator --version 0.2.0 \
+  --set acceptScanningTerms=true \
+  --set timescaledb.password=<alphanumeric password>
 ```
 
-Verify:
+This installs the operator, the REST API, NATS, TimescaleDB (with a PVC) and the bridge into the
+namespace `samma-io`, which the chart creates. The two CRDs come from the chart's `crds/` directory
+and are installed first.
+
+**A values file** (recommended for anything you keep):
+
+```yaml
+# my-values.yaml
+acceptScanningTerms: true
+
+timescaledb:
+  password: <alphanumeric password>   # or existingSecret: <Secret with the key "password">
+  storage: 50Gi
+
+config:
+  sammaIoId: my-org-id
+  sammaIoTags: "['scanner','prod']"
+  apiToken: my-token          # optional samma.io connection
+  profileId: my-profile-id
+```
 
 ```bash
+helm install samma oci://ghcr.io/samma-io/charts/samma-operator --version 0.2.0 -f my-values.yaml
+```
+
+**Without the API and the database.** Targets can come from Ingress annotations and `Scanner`
+resources alone, and results live in `ScanReport` objects, so the API and TimescaleDB are optional:
+
+```bash
+helm install samma oci://ghcr.io/samma-io/charts/samma-operator --version 0.2.0 \
+  --set acceptScanningTerms=true \
+  --set api.enabled=false \
+  --set timescaledb.enabled=false
+```
+
+With `timescaledb.enabled=false` the bridge gets no `DATABASE_URL` and writes ScanReports only; no
+PVC and no password are needed.
+
+**Pin by digest.** Every image takes a `digest` (`operator.digest`, `api.digest`, `bridge.digest`,
+`nats.digest`, `timescaledb.digest`), rendered as `image@sha256:...`. The release notes list the
+digest of every image, and `scanners.images.<scanner>` pins one scanner image the same way.
+
+**Upgrade** (see [Upgrading](#upgrading) for the CRDs):
+
+```bash
+helm upgrade samma oci://ghcr.io/samma-io/charts/samma-operator --version <new version> -f my-values.yaml
+```
+
+**Uninstall:**
+
+```bash
+helm uninstall samma                # the pre-delete hook removes every Scanner first
+kubectl delete namespace samma-io   # removes all data
+kubectl delete crd scanner.samma.io scanreports.samma.io   # Helm leaves CRDs in place
+```
+
+**Key Helm values:**
+
+| Value | Default | Description |
+|---|---|---|
+| `acceptScanningTerms` | `false` | Must be `true`: you accept that the operator actively scans the hosts your Ingresses serve |
+| `namespace` | `samma-io` | Namespace to deploy into |
+| `createNamespace` | `true` | Create the Namespace as part of the release |
+| `operator.image`, `.tag`, `.digest`, `.pullPolicy` | `ghcr.io/samma-io/samma-operator`, `""` (the chart's `appVersion`), `""`, `IfNotPresent` | Operator image; a digest wins over the tag |
+| `api.enabled` | `true` | Deploy the REST API |
+| `api.image`, `.tag`, `.digest`, `.pullPolicy` | `ghcr.io/samma-io/samma-api`, `""`, `""`, `IfNotPresent` | API image |
+| `bridge.image`, `.tag`, `.digest`, `.pullPolicy` | `ghcr.io/samma-io/samma-bridge`, `""`, `""`, `IfNotPresent` | Bridge image |
+| `nats.image`, `.tag`, `.digest`, `.pullPolicy` | `nats`, `2`, `""`, `IfNotPresent` | NATS image |
+| `timescaledb.enabled` | `true` | Deploy TimescaleDB and its PVC |
+| `timescaledb.password`, `timescaledb.existingSecret` | `""`, `""` | One of the two is required when enabled: the password (stored in the Secret `samma-timescaledb`) or your own Secret with the key `password`. No default |
+| `timescaledb.image`, `.tag`, `.digest`, `.pullPolicy` | `timescale/timescaledb`, `latest-pg15`, `""`, `IfNotPresent` | TimescaleDB image |
+| `timescaledb.storage` | `10Gi` | PVC size for scan results |
+| `config.sammaIoId` | `""` | Default asset ID attached to all scans |
+| `config.sammaIoTags` | `['scanner']` | Default tags |
+| `config.apiToken` | `""` | External samma.io API token |
+| `config.natsUrl` | `nats://nats:4222` | NATS server URL |
+| `config.allowPrivateTargets`, `config.allowUnmanagedTargets` | `"false"`, `"true"` | See [Target validation](#target-validation) |
+| `nodeSelector` | `kubernetes.io/arch: amd64` | Node selector for all pods |
+| `serviceAccounts.operator` / `api` / `bridge` / `scanner` | `samma-operator`, `samma-api`, `samma-bridge`, `samma-scanner` | ServiceAccount names, see [RBAC](#rbac) |
+| `scanners.detectTag` | `2.0.0` | Tag of every detect scanner image, see [Scanner types](#scanner-types) |
+| `scanners.imagePrefix`, `scanners.imageTag`, `scanners.images` | `""`, `""`, `{}` | Mirror and per-scanner image references, see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs) |
+| `scanners.pullPolicy` | `IfNotPresent` | `imagePullPolicy` of scanner containers |
+| `scanners.resources` | 100m/128Mi requests, 1/512Mi limits | Resources of every scanner container |
+| `scanners.maxConcurrentScans` | `2` | Scan Jobs allowed to run at the same time |
+| `scanners.scanDeadlineSeconds` | `900` | `activeDeadlineSeconds` of scan Jobs |
+| `scanners.ttlSecondsAfterFinished` | `3600` | When finished Jobs are removed |
+| `scanners.nmapRawSockets` | `false` | Give nmap `NET_RAW` for SYN scans |
+| `scanners.runAsUser` | `1000` | uid of scanner containers |
+| `hooks.preDeleteCleanup` | `true` | Pre-delete hook that removes every Scanner on uninstall |
+| `nats.auth.enabled` | `true` | NATS users with publish-only and subscribe-only rights, see [NATS authentication](#nats-authentication) |
+| `nats.existingSecret` | `""` | Your own Secret with `scanner-password` and `bridge-password` |
+| `nats.auth.scannerPassword`, `nats.auth.bridgePassword` | `""` | Fixed passwords; empty means kept from the cluster or generated |
+| `bridge.scanReports` | `true` | Write ScanReport objects, see [Scan reports](#scan-reports) |
+| `bridge.storeInTimescaleDB` | `true` | Insert every message into TimescaleDB (needs `timescaledb.enabled`) |
+| `networkPolicies.enabled` | `true` | NetworkPolicies for NATS, the bridge and scan pods, see [Network policies](#network-policies) |
+| `networkPolicies.apiServer.ports`, `.cidrs` | `[443, 6443]`, `[]` | How the bridge may reach the API server |
+
+---
+
+### Option 2: Raw manifest
+
+Every release attaches `samma-operator-<version>.yaml`, the chart rendered with its defaults and
+the CRDs inline; `manifest/samma-operator.yaml` in the repository is the same deployment for the
+current version. Set the three `CHANGE-ME` passwords (NATS scanner and bridge, TimescaleDB) before
+applying. Applying the manifest is your acceptance of the scanning terms above: there is no
+`acceptScanningTerms` switch in plain YAML.
+
+```bash
+kubectl apply -f samma-operator-0.2.0.yaml
 kubectl get pods -n samma-io
 ```
 
@@ -841,91 +964,55 @@ curl http://localhost:8080/health
 
 ---
 
-### Option 2 — Helm chart
+## Upgrading
 
-The Helm chart is in `helm/samma-operator/` and exposes all images, credentials, and config as values.
+`helm upgrade` to a newer chart version rolls the operator, API, bridge and (if you did not pin
+them) the detect scanner images to the versions that release was tested with. Two things to know:
 
-**Install with defaults:**
-
-```bash
-helm install samma-operator helm/samma-operator/
-```
-
-**Install with custom values:**
+**CRDs.** The CRDs live in the chart's `crds/` directory. Helm installs them on `helm install` and
+never touches them again, so a release that changes a CRD needs one extra step after the upgrade:
 
 ```bash
-helm install samma-operator helm/samma-operator/ \
-  --set timescaledb.password=mysecretpassword \
-  --set config.sammaIoId=my-org-id \
-  --set config.apiToken=my-token
+helm pull oci://ghcr.io/samma-io/charts/samma-operator --version <version> --untar
+kubectl apply -f samma-operator/crds/
 ```
 
-**Or use a values file** (recommended for production):
+The release notes say when a CRD changed. Helm 3.17 and newer can also do it in one go with
+`helm upgrade --take-ownership`, as long as the CRDs are already in the cluster. The raw manifest
+carries the CRDs inline, so `kubectl apply -f samma-operator-<version>.yaml` updates them as part
+of the apply.
 
-```yaml
-# my-values.yaml
-namespace: samma-io
+**From a chart before 0.2.0.** Those charts installed the CRDs as ordinary templates and used a
+default TimescaleDB password. Before upgrading, set `acceptScanningTerms: true` and
+`timescaledb.password: samma` (the old default, or your own) in your values, then run
+`kubectl apply -f samma-operator/crds/` once after the upgrade so the CRDs are the 0.2.0 ones. The
+CRD objects keep their data; only their definitions are rewritten.
 
-timescaledb:
-  password: mysecretpassword
-  storage: 50Gi
+---
 
-config:
-  sammaIoId: my-org-id
-  sammaIoTags: "['scanner','prod']"
-  apiUrl: https://www.samma.io
-  apiToken: my-token
-  profileId: my-profile-id
-```
+## Releases
 
-```bash
-helm install samma-operator helm/samma-operator/ -f my-values.yaml
-```
+A release is a git tag `v<version>` on `main`, where `<version>` equals `version` and `appVersion`
+in `helm/samma-operator/Chart.yaml`. Pushing the tag, or creating a GitHub release for it, runs
+`.github/workflows/release.yaml`, which
 
-**Upgrade after changing values:**
+1. checks that the tag matches `Chart.yaml`, runs the unit tests and lints the chart;
+2. builds the operator, API and bridge images for `linux/amd64` and `linux/arm64` and pushes them
+   to `ghcr.io/samma-io/samma-operator`, `samma-api` and `samma-bridge`, tagged `<version>` and
+   `<version>-<short sha>`. A release never moves `latest`;
+3. packages the chart with that version and pushes it to `oci://ghcr.io/samma-io/charts`;
+4. creates the GitHub release with the chart archive, the rendered raw manifest and a table of
+   every image's digest.
 
-```bash
-helm upgrade samma-operator helm/samma-operator/ -f my-values.yaml
-```
+To release: set `version` and `appVersion` in `Chart.yaml`, add the entry to `CHANGELOG.md`, merge,
+then `git tag v<version> && git push origin v<version>`. New packages on GHCR are private until
+their visibility is set to public once in the organisation's package settings.
 
-**Uninstall:**
+The detect scanner images are released from [samma-io/detect](https://github.com/samma-io/detect)
+the same way; a new detect release is a one-line change of `scanners.detectTag` here.
 
-```bash
-helm uninstall samma-operator       # the pre-delete hook removes every Scanner first
-kubectl delete namespace samma-io   # removes all data
-```
-
-**Key Helm values:**
-
-| Value | Default | Description |
-|---|---|---|
-| `namespace` | `samma-io` | Namespace to deploy into |
-| `operator.image` / `operator.tag` | `mattiashem/samma-operator:latest` | Operator image |
-| `api.image` / `api.tag` | `sammascanner/api:latest` | API image |
-| `timescaledb.password` | `samma` | Database password — change in production |
-| `timescaledb.storage` | `10Gi` | PVC size for scan results |
-| `config.sammaIoId` | `""` | Default asset ID attached to all scans |
-| `config.sammaIoTags` | `['scanner']` | Default tags |
-| `config.apiToken` | `""` | External samma.io API token |
-| `config.natsUrl` | `nats://nats:4222` | NATS server URL |
-| `nodeSelector` | `kubernetes.io/arch: amd64` | Node selector for all pods |
-| `createNamespace` | `true` | Create the Namespace as part of the release |
-| `serviceAccounts.operator` / `api` / `bridge` / `scanner` | `samma-operator`, `samma-api`, `samma-bridge`, `samma-scanner` | ServiceAccount names, see [RBAC](#rbac) |
-| `scanners.imagePrefix`, `scanners.imageTag`, `scanners.images` | `""`, `""`, `{}` | Scanner image references, see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs) |
-| `scanners.resources` | 100m/128Mi requests, 1/512Mi limits | Resources of every scanner container |
-| `scanners.maxConcurrentScans` | `2` | Scan Jobs allowed to run at the same time |
-| `scanners.scanDeadlineSeconds` | `900` | `activeDeadlineSeconds` of scan Jobs |
-| `scanners.ttlSecondsAfterFinished` | `3600` | When finished Jobs are removed |
-| `scanners.nmapRawSockets` | `false` | Give nmap `NET_RAW` for SYN scans |
-| `scanners.runAsUser` | `1000` | uid of scanner containers |
-| `hooks.preDeleteCleanup` | `true` | Pre-delete hook that removes every Scanner on uninstall |
-| `nats.auth.enabled` | `true` | NATS users with publish-only and subscribe-only rights, see [NATS authentication](#nats-authentication) |
-| `nats.existingSecret` | `""` | Your own Secret with `scanner-password` and `bridge-password` |
-| `nats.auth.scannerPassword`, `nats.auth.bridgePassword` | `""` | Fixed passwords; empty means kept from the cluster or generated |
-| `bridge.scanReports` | `true` | Write ScanReport objects, see [Scan reports](#scan-reports) |
-| `bridge.storeInTimescaleDB` | `true` | Insert every message into TimescaleDB |
-| `networkPolicies.enabled` | `true` | NetworkPolicies for NATS, the bridge and scan pods, see [Network policies](#network-policies) |
-| `networkPolicies.apiServer.ports`, `.cidrs` | `[443, 6443]`, `[]` | How the bridge may reach the API server |
+Every image and the chart can be pulled by digest, which is how downstream distributions mirror a
+release into their own registry without depending on GHCR at deploy time.
 
 ---
 
@@ -976,16 +1063,16 @@ To import a dashboard through the Grafana UI instead of using the script: **Dash
 
 ## Build & push images
 
-```bash
-# Operator
-docker build --platform linux/amd64 -t mattiashem/samma-operator:latest ./operator/
-docker push mattiashem/samma-operator:latest
-kubectl rollout restart deployment/samma-operator -n samma-io
+Images are built by GitHub Actions: `.github/workflows/build.yaml` on every push to `main`
+(`ghcr.io/samma-io/samma-{operator,api,bridge}` tagged `sha-<short sha>` and `latest`) and
+`.github/workflows/release.yaml` on every tag `v*` (see [Releases](#releases)). To try a build of
+your own on a development cluster:
 
-# API
-docker build --platform linux/amd64 -t sammascanner/api:latest ./api/
-docker push sammascanner/api:latest
-kubectl rollout restart deployment/samma-api -n samma-io
+```bash
+docker build -t ghcr.io/<you>/samma-operator:dev ./operator/
+docker push ghcr.io/<you>/samma-operator:dev
+helm upgrade samma oci://ghcr.io/samma-io/charts/samma-operator --version 0.2.0 --reuse-values \
+  --set operator.image=ghcr.io/<you>/samma-operator --set operator.tag=dev
 ```
 
 ## Build & Development

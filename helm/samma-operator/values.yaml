@@ -1,3 +1,11 @@
+# The operator performs active security scans, from inside the cluster,
+# against the hosts the cluster's Ingresses serve (and against any target a
+# Scanner resource names). Only scan hosts you are allowed to scan. The chart
+# refuses to render the operator until this is true:
+#
+#   --set acceptScanningTerms=true
+acceptScanningTerms: false
+
 # Namespace to deploy into
 namespace: samma-io
 
@@ -6,7 +14,9 @@ namespace: samma-io
 # `helm install --create-namespace` makes it.
 createNamespace: true
 
-# Node architecture selector (set to "" to disable)
+# Node architecture selector (set to "" to disable). Releases publish the
+# operator, API and bridge images for amd64 and arm64; the classic scanner
+# images (nmap, nikto, tsunami) are amd64 only, so the selector stays.
 nodeSelector:
   kubernetes.io/arch: amd64
 
@@ -20,11 +30,17 @@ serviceAccounts:
   bridge: samma-bridge
   scanner: samma-scanner
 
+# Images. Every component takes image, tag, digest and pullPolicy:
+#   tag     empty means the chart's appVersion (the release the chart came
+#           from), which is how a release pins its own images.
+#   digest  "sha256:..." renders image@digest instead of image:tag and wins
+#           over the tag. Release notes list the digest of every image.
 # Operator component
 operator:
-  image: mattiashem/samma-operator
-  tag: latest
-  pullPolicy: Always
+  image: ghcr.io/samma-io/samma-operator
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
   resources:
     requests:
       cpu: 100m
@@ -35,19 +51,35 @@ operator:
 
 # Scanner Jobs and CronJobs the operator creates (README, "Scan Jobs and CronJobs").
 scanners:
-  # Image references. Every scanner has a default image in
-  # operator/code/jobspec.py. imagePrefix replaces the registry and
-  # organisation of every default, keeping the image's base name
-  # (ghcr.io/samma-io/detect-dns-scanner:latest becomes
-  # <imagePrefix>/detect-dns-scanner:<imageTag, or the default tag>).
-  # images sets a full reference for one scanner and wins over the prefix.
+  # The detect scanners (github.com/samma-io/detect) are released together,
+  # so one tag covers all of them: ghcr.io/samma-io/detect-<name>:<detectTag>.
+  # This is the detect release the operator was tested with.
+  detectTag: "2.0.0"
+  # The scanners detectTag applies to (the operator's own table has the same
+  # names). The classic images (nmap, nikto, tsunami) keep the defaults in
+  # operator/code/jobspec.py until they are rebuilt.
+  detectScanners:
+    - dns-scanner
+    - http-headers-scanner
+    - http-redirect-scanner
+    - port-scanner
+    - ssh-banner-scanner
+    - tls-scanner
+    - traceroute-scanner
+    - whois-scanner
+  # imagePrefix replaces the registry and organisation of every scanner
+  # image, keeping the image's base name (a mirror of the detect images
+  # becomes <imagePrefix>/detect-dns-scanner:<imageTag, else detectTag>; a
+  # classic image becomes <imagePrefix>/nmap:<imageTag, else its default tag>).
   imagePrefix: ""
   imageTag: ""
   # imagePullPolicy for scanner containers; empty keeps the Kubernetes default.
-  pullPolicy: ""
+  pullPolicy: IfNotPresent
+  # A full reference for one scanner, with a tag or a digest. Wins over
+  # everything above for that scanner.
   images: {}
   #  nmap: ghcr.io/samma-io/nmap:v0.3
-  #  dns-scanner: registry.example.com/mirror/detect-dns-scanner:2026.10
+  #  dns-scanner: ghcr.io/samma-io/detect-dns-scanner@sha256:0123abcd...
   # Requests and limits of every scanner container.
   resources:
     requests:
@@ -79,11 +111,14 @@ scanners:
 hooks:
   preDeleteCleanup: true
 
-# API component
+# API component: the REST interface for targets and scanners. Not needed
+# when targets come from Ingress annotations or Scanner resources.
 api:
-  image: sammascanner/api
-  tag: latest
-  pullPolicy: Always
+  enabled: true
+  image: ghcr.io/samma-io/samma-api
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
   resources:
     requests:
       cpu: 100m
@@ -96,6 +131,8 @@ api:
 nats:
   image: nats
   tag: "2"
+  digest: ""
+  pullPolicy: IfNotPresent
   resources:
     requests:
       cpu: 50m
@@ -132,15 +169,25 @@ networkPolicies:
     ports: [443, 6443]
     cidrs: []
 
-# TimescaleDB — scan results storage
+# TimescaleDB: scan results storage for Grafana. false installs no database
+# and no PVC; the bridge then writes ScanReports only (bridge.storeInTimescaleDB
+# is ignored).
 timescaledb:
+  enabled: true
   image: timescale/timescaledb
   tag: latest-pg15
+  digest: ""
+  pullPolicy: IfNotPresent
   storage: 10Gi
   # storageClass: "" # set to use a specific StorageClass
   db: samma
   user: samma
-  password: samma   # override in production!
+  # The database password. Required when enabled: set password (the chart
+  # puts it in the Secret samma-timescaledb) or existingSecret (a Secret of
+  # your own with the key "password"). Alphanumeric: it travels in the
+  # bridge's DATABASE_URL. There is no default.
+  password: ""
+  existingSecret: ""
   resources:
     requests:
       cpu: 100m
@@ -151,13 +198,14 @@ timescaledb:
 
 # Bridge: NATS to ScanReports and TimescaleDB (README, "Scan reports")
 bridge:
-  image: sammascanner/bridge
-  tag: latest
-  pullPolicy: Always
+  image: ghcr.io/samma-io/samma-bridge
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
   # Write ScanReport objects from schema v2 messages.
   scanReports: true
   # Insert every message into TimescaleDB as before. false leaves the
-  # bridge with no database at all.
+  # bridge with no database at all; so does timescaledb.enabled=false.
   storeInTimescaleDB: true
   # How long the list of Scanners (used to drop messages for unknown
   # targets) is cached, and how long a run waits for findings that are
