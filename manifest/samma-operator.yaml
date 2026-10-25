@@ -1,4 +1,4 @@
-# samma-operator 0.2.2, the same deployment as the Helm chart with its
+# samma-operator 0.2.3, the same deployment as the Helm chart with its
 # defaults (helm/samma-operator), CRDs included. Releases attach a rendered
 # copy of this file.
 #
@@ -453,7 +453,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: samma-operator
-          image: ghcr.io/samma-io/samma-operator:0.2.2
+          image: ghcr.io/samma-io/samma-operator:0.2.3
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -520,21 +520,21 @@ spec:
             # The detect scanners, pinned to the detect release this operator
             # was tested with (the chart's scanners.detectTag).
             - name: SAMMA_SCANNER_IMAGE_DNS_SCANNER
-              value: "ghcr.io/samma-io/detect-dns-scanner:2.0.0"
+              value: "ghcr.io/samma-io/detect-dns-scanner:2.0.2"
             - name: SAMMA_SCANNER_IMAGE_HTTP_HEADERS_SCANNER
-              value: "ghcr.io/samma-io/detect-http-headers-scanner:2.0.0"
+              value: "ghcr.io/samma-io/detect-http-headers-scanner:2.0.2"
             - name: SAMMA_SCANNER_IMAGE_HTTP_REDIRECT_SCANNER
-              value: "ghcr.io/samma-io/detect-http-redirect-scanner:2.0.0"
+              value: "ghcr.io/samma-io/detect-http-redirect-scanner:2.0.2"
             - name: SAMMA_SCANNER_IMAGE_PORT_SCANNER
-              value: "ghcr.io/samma-io/detect-port-scanner:2.0.0"
+              value: "ghcr.io/samma-io/detect-port-scanner:2.0.2"
             - name: SAMMA_SCANNER_IMAGE_SSH_BANNER_SCANNER
-              value: "ghcr.io/samma-io/detect-ssh-banner-scanner:2.0.0"
+              value: "ghcr.io/samma-io/detect-ssh-banner-scanner:2.0.2"
             - name: SAMMA_SCANNER_IMAGE_TLS_SCANNER
-              value: "ghcr.io/samma-io/detect-tls-scanner:2.0.0"
+              value: "ghcr.io/samma-io/detect-tls-scanner:2.0.2"
             - name: SAMMA_SCANNER_IMAGE_TRACEROUTE_SCANNER
-              value: "ghcr.io/samma-io/detect-traceroute-scanner:2.0.0"
+              value: "ghcr.io/samma-io/detect-traceroute-scanner:2.0.2"
             - name: SAMMA_SCANNER_IMAGE_WHOIS_SCANNER
-              value: "ghcr.io/samma-io/detect-whois-scanner:2.0.0"
+              value: "ghcr.io/samma-io/detect-whois-scanner:2.0.2"
             - name: SAMMA_SCANNER_CPU_REQUEST
               value: "100m"
             - name: SAMMA_SCANNER_MEMORY_REQUEST
@@ -589,7 +589,7 @@ spec:
         kubernetes.io/arch: amd64
       containers:
         - name: samma-api
-          image: ghcr.io/samma-io/samma-api:0.2.2
+          image: ghcr.io/samma-io/samma-api:0.2.3
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -865,7 +865,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: samma-bridge
-          image: ghcr.io/samma-io/samma-bridge:0.2.2
+          image: ghcr.io/samma-io/samma-bridge:0.2.3
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -896,7 +896,7 @@ spec:
             # The release, for the startup banner: keep it equal to the
             # bridge image tag above.
             - name: SAMMA_VERSION
-              value: "0.2.2"
+              value: "0.2.3"
             - name: NATS_URL
               value: nats://nats:4222
             - name: NATS_SUBJECT

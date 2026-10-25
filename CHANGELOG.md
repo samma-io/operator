@@ -5,6 +5,54 @@ A release is a tag `v<version>` on `main`. Pushing it runs
 `oci://ghcr.io/samma-io/charts/samma-operator` and the images to
 `ghcr.io/samma-io/samma-{operator,api,bridge}` (README, "Releases").
 
+## 0.2.3
+
+Security hardening from the samma.io audit, plus the detect 2.0.2 scanners.
+**Breaking for installs:** the chart now needs `api.token` (or
+`api.existingSecret`), and the new NetworkPolicies and Ingress namespace
+filter change what can reach and what gets scanned; see "Upgrading" below.
+
+- Scanner targets are validated, and Job and CronJob bodies are built as
+  objects, never from text templates, so a target cannot inject into a pod
+  spec (operator#11, operator#19; #5, #20, #10).
+- Jobs, CronJobs and ScanReports are keyed by the tenant's `samma_io_id` as
+  well as the target, so two tenants scanning the same host never share a
+  scan or its `SAMMA_IO_ID` (operator#14; #23, #10).
+- The API requires `Authorization: Bearer <SAMMA_API_TOKEN>` on every route
+  except `/health`, `/ready` and `/metrics`, and refuses to start without the
+  token. The chart reads it from `api.token` or `api.existingSecret`
+  (operator#15, operator#24; #25, #26).
+- The bridge stores a TimescaleDB row only when its target and `samma-io.id`
+  match a current Scanner, so a pod on NATS cannot plant results for a
+  tenant it is not scanning (operator#12; #27).
+- The bridge creates the read-only NOLOGIN role `samma_reader` (SELECT on
+  `scan_results`) on every start; the `samma-timescaledb` NetworkPolicy lets
+  only the bridge and `networkPolicies.timescaledbClients` reach 5432
+  (operator#13; #30).
+- Opted-in Ingresses create Scanners only in the operator's own namespace,
+  plus `ingress.watchNamespaces` (`"*"` for all) (operator#16; #28).
+- The `samma-io` namespace carries PodSecurity `enforce: baseline`,
+  `warn: restricted`; the `samma-api` NetworkPolicy lets only the namespace
+  and `networkPolicies.apiClients` reach 8080; NATS monitoring on 8222 is off
+  unless `nats.monitoring: true` (operator#17; #31).
+- Grafana setup has no default credentials (`GRAFANA_USER`,
+  `TSDB_PASSWORD` required); nats and timescaledb images are pinned by
+  digest (operator#18; #21).
+- detect scanners move to `2.0.2` (`scanners.detectTag`): schema v2 plus
+  traceroute `--`, no `file://` redirects and a safe `PARSER` file name
+  (samma-io/detect#10, samma-io/detect#12).
+
+### Upgrading
+
+- Set `api.token` (or `api.existingSecret`) and give the dashboard the same
+  value as `OPERATOR_API_TOKEN`.
+- List the dashboard's namespace in `networkPolicies.apiClients` and
+  `networkPolicies.timescaledbClients`, and give it a login role that is a
+  member of `samma_reader`.
+- Add any namespace whose Ingresses should still be scanned to
+  `ingress.watchNamespaces`; Scanners made earlier for other namespaces stay
+  until deleted by hand.
+
 ## 0.2.2
 
 Found by the first soak of 0.2.1 on a Cilium cluster behind Traefik. Pull
