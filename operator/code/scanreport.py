@@ -45,9 +45,10 @@ MESSAGE_MAX_LENGTH = 512
 REASON_DEADLINE = "DeadlineExceeded"
 
 
-def report_name(scanner, template, target):
-    """Same as the Job's name: <scanner>[-<template>]-<target hash>."""
-    return jobspec.object_name(scanner, template, target)
+def report_name(scanner, template, target, samma_io_id=None):
+    """Same as the Job's name: <scanner>[-<template>]-<hash>, the hash
+    covering the tenant's samma_io_id when there is one."""
+    return jobspec.object_name(scanner, template, target, samma_io_id)
 
 
 def wants_report(scanner):
@@ -78,6 +79,12 @@ def job_identity(metadata):
     if not scanner or not target:
         return None
     return scanner, template or None, target
+
+
+def job_samma_io_id(metadata):
+    """The tenant id a scan Job was built for, or None."""
+    annotations = metadata.get("annotations") or {}
+    return annotations.get(jobspec.ANNOTATION_SAMMA_IO_ID) or None
 
 
 def outcome_recorded(metadata):
@@ -174,7 +181,7 @@ def latest_pod_name(pods):
     return best
 
 
-def report_body(scanner, template, target, namespace, owners=None, extra_labels=None, tier=None):
+def report_body(scanner, template, target, namespace, owners=None, extra_labels=None, tier=None, samma_io_id=None):
     """A ScanReport with metadata and spec only; status is written through
     the status subresource afterwards."""
     labels = {
@@ -190,11 +197,14 @@ def report_body(scanner, template, target, namespace, owners=None, extra_labels=
         spec["template"] = template
     if tier:
         spec["tier"] = tier
+    annotations = {jobspec.ANNOTATION_TARGET: target}
+    if samma_io_id not in (None, ""):
+        annotations[jobspec.ANNOTATION_SAMMA_IO_ID] = str(samma_io_id)
     metadata = {
-        "name": report_name(scanner, template, target),
+        "name": report_name(scanner, template, target, samma_io_id),
         "namespace": namespace,
         "labels": labels,
-        "annotations": {jobspec.ANNOTATION_TARGET: target},
+        "annotations": annotations,
     }
     if owners:
         metadata["ownerReferences"] = [dict(owner) for owner in owners]

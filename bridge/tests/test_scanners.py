@@ -55,6 +55,22 @@ class ScannerIndexTests(unittest.TestCase):
         self.assertEqual(owner["apiVersion"], "samma.io/v1")
         self.assertEqual(owner["name"], "tls-api")
 
+    def test_for_run_picks_the_tenant(self):
+        """operator#14: a run is reported under the Scanners of its tenant."""
+        a = scanner_object(name="tls-a", uid="ua")
+        a["spec"]["samma_io_id"] = "tenant-a"
+        b = scanner_object(name="tls-b", uid="ub")
+        b["spec"]["samma_io_id"] = "tenant-b"
+        shared = scanner_object(name="tls-ingress", uid="ui")
+        index = ScannerIndex(ListerSpy([a, b, shared]), ttl_seconds=30, clock=self.clock)
+        items, sid = index.for_run("tls-scanner", TARGET, "tenant-a")
+        self.assertEqual(([i["metadata"]["uid"] for i in items], sid), (["ua"], "tenant-a"))
+        self.assertEqual([o["uid"] for o in index.owners("tls-scanner", TARGET, "tenant-b")], ["ub"])
+        # No id, or an id no Scanner has: the Scanners without an id, keyed by target.
+        for unknown in (None, "1234"):
+            items, sid = index.for_run("tls-scanner", TARGET, unknown)
+            self.assertEqual(([i["metadata"]["uid"] for i in items], sid), (["ui"], None))
+
     def test_cache_ttl(self):
         self.index.is_target(TARGET)
         self.index.is_target(TARGET)

@@ -37,6 +37,7 @@ LABEL_TARGET_HASH = "samma.io/target-hash"
 LABEL_INGRESS_NAMESPACE = "samma.io/ingress-namespace"
 LABEL_INGRESS_NAME = "samma.io/ingress-name"
 ANNOTATION_TARGET = "samma.io/target"
+ANNOTATION_SAMMA_IO_ID = "samma.io/samma-io-id"
 
 SEVERITY_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
 SUMMARY_KEYS = ("critical", "high", "medium", "low", "info")
@@ -60,12 +61,18 @@ def target_hash(target):
     return hashlib.sha256(target.encode("utf-8")).hexdigest()[:8]
 
 
-def report_name(scanner, template, target):
+def tenant_key(target, samma_io_id=None):
+    if samma_io_id in (None, ""):
+        return target
+    return "{0}/{1}".format(samma_io_id, target)
+
+
+def report_name(scanner, template, target, samma_io_id=None):
     if template and template != scanner:
         base = "{0}-{1}".format(scanner, template)
     else:
         base = scanner
-    return "{0}-{1}".format(base, target_hash(target))
+    return "{0}-{1}".format(base, target_hash(tenant_key(target, samma_io_id)))
 
 
 def label_value(value):
@@ -88,7 +95,7 @@ def owner_reference(scanner_object):
     }
 
 
-def report_body(scanner, template, target, namespace, owners=None, extra_labels=None, tier=None):
+def report_body(scanner, template, target, namespace, owners=None, extra_labels=None, tier=None, samma_io_id=None):
     labels = {
         LABEL_MANAGED_BY: MANAGED_BY,
         LABEL_SCANNER: scanner,
@@ -102,11 +109,14 @@ def report_body(scanner, template, target, namespace, owners=None, extra_labels=
         spec["template"] = template
     if tier:
         spec["tier"] = tier
+    annotations = {ANNOTATION_TARGET: target}
+    if samma_io_id not in (None, ""):
+        annotations[ANNOTATION_SAMMA_IO_ID] = str(samma_io_id)
     metadata = {
-        "name": report_name(scanner, template, target),
+        "name": report_name(scanner, template, target, samma_io_id),
         "namespace": namespace,
         "labels": labels,
-        "annotations": {ANNOTATION_TARGET: target},
+        "annotations": annotations,
     }
     if owners:
         metadata["ownerReferences"] = [dict(owner) for owner in owners if owner.get("uid")]

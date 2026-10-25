@@ -96,9 +96,10 @@ class Pipeline(object):
 
     def _write(self, finalized):
         run = finalized.run
-        owners = self.index.owners(run.scanner, run.target)
-        extra_labels = self.index.extra_labels(run.scanner, run.target)
-        body = reports.report_body(run.scanner, run.template, run.target, self.namespace, owners=owners, extra_labels=extra_labels, tier=run.tier)
+        _, samma_io_id = self.index.for_run(run.scanner, run.target, run.samma_io_id)
+        owners = self.index.owners(run.scanner, run.target, run.samma_io_id)
+        extra_labels = self.index.extra_labels(run.scanner, run.target, run.samma_io_id)
+        body = reports.report_body(run.scanner, run.template, run.target, self.namespace, owners=owners, extra_labels=extra_labels, tier=run.tier, samma_io_id=samma_io_id)
         name = body["metadata"]["name"]
         if run.outcome == messages.OUTCOME_SUCCEEDED and not finalized.complete:
             # Fewer findings than the scanner sent: an incomplete picture

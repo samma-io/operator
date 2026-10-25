@@ -244,6 +244,20 @@ class BridgeAgreementTests(unittest.TestCase):
                 self.assertEqual(bridge_reports.report_name(scanner, template, target), scanreport.report_name(scanner, template, target))
                 self.assertEqual(bridge_reports.report_name(scanner, template, target), jobspec.object_name(scanner, template, target))
 
+    def test_tenant_names_agree(self):
+        for samma_io_id in (None, "", "tenant-a", "cm1x2y3z4"):
+            for scanner, template in (("tls-scanner", None), ("nmap", "http")):
+                self.assertEqual(bridge_reports.report_name(scanner, template, TARGET, samma_io_id), scanreport.report_name(scanner, template, TARGET, samma_io_id))
+                self.assertEqual(bridge_reports.report_name(scanner, template, TARGET, samma_io_id), jobspec.object_name(scanner, template, TARGET, samma_io_id))
+        self.assertEqual(bridge_reports.ANNOTATION_SAMMA_IO_ID, jobspec.ANNOTATION_SAMMA_IO_ID)
+
+    def test_job_samma_io_id_round_trips(self):
+        self.assertEqual(scanreport.job_samma_io_id({"annotations": {jobspec.ANNOTATION_SAMMA_IO_ID: "tenant-a"}}), "tenant-a")
+        self.assertIsNone(scanreport.job_samma_io_id({"annotations": {}}))
+        body = scanreport.report_body("tls-scanner", None, TARGET, "samma-io", samma_io_id="tenant-a")
+        self.assertEqual(body["metadata"]["name"], jobspec.object_name("tls-scanner", None, TARGET, "tenant-a"))
+        self.assertEqual(body["metadata"]["annotations"][jobspec.ANNOTATION_SAMMA_IO_ID], "tenant-a")
+
     def test_labels_and_patterns_agree(self):
         self.assertEqual(bridge_reports.LABEL_MANAGED_BY, jobspec.LABEL_MANAGED_BY)
         self.assertEqual(bridge_reports.MANAGED_BY, jobspec.MANAGED_BY)

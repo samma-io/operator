@@ -166,6 +166,18 @@ class NamingTests(unittest.TestCase):
         self.assertEqual(jobspec.object_name("nikto", "nikto", "www.example.com"), "nikto-" + digest)
         self.assertEqual(jobspec.object_name("nikto", None, "www.example.com"), "nikto-" + digest)
 
+    def test_tenants_get_their_own_names(self):
+        """operator#14: two tenants on one host must not share a Job."""
+        plain = jobspec.object_name("nmap", "port", "www.example.com")
+        self.assertEqual(jobspec.object_name("nmap", "port", "www.example.com", None), plain)
+        self.assertEqual(jobspec.object_name("nmap", "port", "www.example.com", ""), plain)
+        a = jobspec.object_name("nmap", "port", "www.example.com", "tenant-a")
+        b = jobspec.object_name("nmap", "port", "www.example.com", "tenant-b")
+        self.assertNotEqual(a, plain)
+        self.assertNotEqual(a, b)
+        self.assertRegex(a, DNS_LABEL)
+        self.assertEqual(a, jobspec.object_name("nmap", "port", "www.example.com", "tenant-a"))
+
     def test_hash_is_deterministic_and_distinguishes_targets(self):
         self.assertEqual(jobspec.target_hash("a.example"), jobspec.target_hash("a.example"))
         self.assertNotEqual(jobspec.target_hash("a.example"), jobspec.target_hash("b.example"))
@@ -251,6 +263,21 @@ class ImageTests(unittest.TestCase):
         nmap = jobspec.SCANNERS["nmap"]
         s = settings(image_prefix="ghcr.io/x", image_overrides={"nmap": "r.example/nmap:v9"})
         self.assertEqual(jobspec.image_for(nmap, s), "r.example/nmap:v9")
+
+
+class TenantJobTests(unittest.TestCase):
+    def test_job_and_cronjob_are_keyed_by_samma_io_id(self):
+        spec, variant = run("dns-scanner")
+        for build in (
+            lambda sid: jobspec.build_job(spec, variant, "www.example.com", ENV, settings(), owner=OWNER, samma_io_id=sid),
+            lambda sid: jobspec.build_cronjob(spec, variant, "www.example.com", ENV, settings(), "none", owner=OWNER, samma_io_id=sid),
+        ):
+            a, b, none = build("tenant-a"), build("tenant-b"), build(None)
+            self.assertNotEqual(a["metadata"]["name"], b["metadata"]["name"])
+            self.assertEqual(a["metadata"]["name"], jobspec.object_name("dns-scanner", variant.name, "www.example.com", "tenant-a"))
+            self.assertEqual(a["metadata"]["annotations"][jobspec.ANNOTATION_SAMMA_IO_ID], "tenant-a")
+            self.assertEqual(none["metadata"]["name"], jobspec.object_name("dns-scanner", variant.name, "www.example.com"))
+            self.assertNotIn(jobspec.ANNOTATION_SAMMA_IO_ID, none["metadata"]["annotations"])
 
 
 class BuildJobTests(unittest.TestCase):

@@ -31,6 +31,13 @@ def scanner_names(scanner_object):
     return names
 
 
+def _spec_id(scanner_object):
+    value = (scanner_object.get("spec") or {}).get("samma_io_id")
+    if value in (None, ""):
+        return None
+    return str(value).strip() or None
+
+
 class ScannerIndex(object):
     def __init__(self, lister, ttl_seconds=30, clock=None, logger=None):
         self.lister = lister
@@ -78,12 +85,27 @@ class ScannerIndex(object):
                 matches.append(item)
         return matches
 
-    def owners(self, scanner, target):
-        return [reports.owner_reference(item) for item in self.matching(scanner, target)]
+    def for_run(self, scanner, target, samma_io_id=None):
+        """(Scanners, tenant id) a run is reported under. The operator keys
+        a Scanner's Jobs by its spec.samma_io_id, so a run whose id is that
+        of a matching Scanner belongs to that tenant's Scanners; any other
+        run belongs to the matching Scanners without an id (made from an
+        Ingress), keyed by target alone."""
+        matches = self.matching(scanner, target)
+        if samma_io_id:
+            tenant = [item for item in matches if _spec_id(item) == samma_io_id]
+            if tenant:
+                return tenant, samma_io_id
+        return [item for item in matches if not _spec_id(item)], None
 
-    def extra_labels(self, scanner, target):
+    def owners(self, scanner, target, samma_io_id=None):
+        items, _ = self.for_run(scanner, target, samma_io_id)
+        return [reports.owner_reference(item) for item in items]
+
+    def extra_labels(self, scanner, target, samma_io_id=None):
         """Ingress labels of the first matching Scanner that has them."""
-        for item in self.matching(scanner, target):
+        items, _ = self.for_run(scanner, target, samma_io_id)
+        for item in items:
             labels = (item.get("metadata") or {}).get("labels") or {}
             extra = dict((key, labels[key]) for key in (reports.LABEL_INGRESS_NAMESPACE, reports.LABEL_INGRESS_NAME) if key in labels)
             if extra:

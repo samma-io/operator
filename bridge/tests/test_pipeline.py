@@ -96,6 +96,24 @@ class SucceededRunTests(unittest.TestCase):
         self.assertEqual(h.metrics.findings_dropped.value("over-limit"), 51)
 
 
+class TenantTests(unittest.TestCase):
+    def test_two_tenants_on_one_host_get_their_own_reports(self):
+        a = scanner_object(name="tls-a", uid="ua")
+        a["spec"]["samma_io_id"] = "tenant-a"
+        b = scanner_object(name="tls-b", uid="ub")
+        b["spec"]["samma_io_id"] = "tenant-b"
+        h = PipelineHarness(scanners=[a, b])
+        for sid, run_id in (("tenant-a", "tls-a-run"), ("tenant-b", "tls-b-run")):
+            block = {"scanner": "tls-scanner", "id": sid, "tags": [], "json": "{}"}
+            h.feed(finding(runId=run_id, **{"samma-io": block}), run(runId=run_id, findingCount=1, **{"samma-io": block}))
+        for sid, uid in (("tenant-a", "ua"), ("tenant-b", "ub")):
+            report = h.store.objects.get(reports.report_name("tls-scanner", None, TARGET, sid))
+            self.assertIsNotNone(report, sid)
+            self.assertEqual(report["metadata"]["annotations"][reports.ANNOTATION_SAMMA_IO_ID], sid)
+            self.assertEqual([o["uid"] for o in report["metadata"]["ownerReferences"]], [uid])
+        self.assertIsNone(h.report)
+
+
 class FailedRunTests(unittest.TestCase):
     def test_failed_run_keeps_findings(self):
         h = PipelineHarness()

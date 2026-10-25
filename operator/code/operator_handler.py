@@ -281,6 +281,7 @@ def record_job_outcomes():
         if identity is None:
             continue
         scanner, template, target = identity
+        samma_id = scanreport.job_samma_io_id(metadata)
         if not scanreport.wants_report(scanner):
             continue
         status = job.status.to_dict() if job.status is not None else {}
@@ -292,7 +293,7 @@ def record_job_outcomes():
         try:
             run_id = job_pod_name(job_name) or job_name
             write_failed_run(
-                scanner, template, target,
+                scanner, template, target, samma_id,
                 owners=scanreport.scanner_owners(metadata),
                 extra_labels=scanreport.ingress_labels(metadata),
                 run_id=run_id, job_name=job_name, outcome=outcome, message=message,
@@ -306,7 +307,7 @@ def record_job_outcomes():
         except ApiException as exc:
             if exc.status != 404:
                 logging.warning("Could not annotate Job %s: %s", job_name, exc.reason)
-        logging.info("Recorded %s run of %s (%s) in ScanReport %s", outcome, scanner, target, scanreport.report_name(scanner, template, target))
+        logging.info("Recorded %s run of %s (%s) in ScanReport %s", outcome, scanner, target, scanreport.report_name(scanner, template, target, samma_id))
 
 
 def job_pod_name(job_name):
@@ -316,19 +317,19 @@ def job_pod_name(job_name):
     return scanreport.latest_pod_name([pod.metadata.to_dict() for pod in pods if pod.metadata is not None])
 
 
-def write_failed_run(scanner, template, target, owners, extra_labels, run_id, job_name, outcome, message, started_at, finished_at):
+def write_failed_run(scanner, template, target, samma_id, owners, extra_labels, run_id, job_name, outcome, message, started_at, finished_at):
     """Create the ScanReport when it is missing, then replace its status
     with lastRun set, keeping findings and everything else. The replace
     carries the resourceVersion read just before, so a bridge write in
     between is a 409 and the loop reads again."""
-    name = scanreport.report_name(scanner, template, target)
+    name = scanreport.report_name(scanner, template, target, samma_id)
     for attempt in range(3):
         try:
             existing = k8sapi.get_namespaced_custom_object(scanreport.GROUP, scanreport.VERSION, NAMESPACE, scanreport.PLURAL, name)
         except ApiException as exc:
             if exc.status != 404:
                 raise
-            body = scanreport.report_body(scanner, template, target, NAMESPACE, owners=owners, extra_labels=extra_labels)
+            body = scanreport.report_body(scanner, template, target, NAMESPACE, owners=owners, extra_labels=extra_labels, samma_io_id=samma_id)
             try:
                 existing = k8sapi.create_namespaced_custom_object(scanreport.GROUP, scanreport.VERSION, NAMESPACE, scanreport.PLURAL, body)
                 logging.info("Created ScanReport %s", name)
@@ -455,11 +456,14 @@ def build_scanner_objects(body, retry):
     env = jobspec.scanner_env(body.get('spec') or {}, ENV_DEFAULTS)
     owner, extra_labels = scanner_links(body)
     name = body['metadata']['name']
+    # Keyed by tenant: a Job runs with one SAMMA_IO_ID, so two tenants
+    # scanning the same host each need their own (operator#14).
+    samma_id = (body.get('spec') or {}).get('samma_io_id')
     jobs = []
     cronjobs = []
     for spec, variant in runs:
-        jobs.append(jobspec.build_job(spec, variant, target, env, SETTINGS, owner=owner, scanner_name=name, extra_labels=extra_labels))
-        cronjobs.append(jobspec.build_cronjob(spec, variant, target, env, SETTINGS, scheduler, owner=owner, scanner_name=name, extra_labels=extra_labels))
+        jobs.append(jobspec.build_job(spec, variant, target, env, SETTINGS, owner=owner, scanner_name=name, extra_labels=extra_labels, samma_io_id=samma_id))
+        cronjobs.append(jobspec.build_cronjob(spec, variant, target, env, SETTINGS, scheduler, owner=owner, scanner_name=name, extra_labels=extra_labels, samma_io_id=samma_id))
     return jobs, cronjobs
 
 

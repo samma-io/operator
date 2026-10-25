@@ -50,6 +50,7 @@ LABEL_INGRESS_NAMESPACE = "samma.io/ingress-namespace"
 LABEL_INGRESS_NAME = "samma.io/ingress-name"
 ANNOTATION_TARGET = "samma.io/target"
 ANNOTATION_SCANNER_NAME = "samma.io/scanner-name"
+ANNOTATION_SAMMA_IO_ID = "samma.io/samma-io-id"
 ANNOTATION_INGRESS = "samma.io/ingress"
 ANNOTATION_SPEC_HASH = "samma.io/spec-hash"
 # Set on a Scanner by the operator: "queued" while its first Job waits for a
@@ -423,13 +424,24 @@ def target_hash(target):
     return hashlib.sha256(target.encode("utf-8")).hexdigest()[:8]
 
 
-def object_name(scanner, variant_name, target):
+def tenant_key(target, samma_io_id=None):
+    """What a Job, CronJob and ScanReport are keyed by: the target plus the
+    tenant's samma_io_id when the Scanner has one. Two tenants scanning the
+    same host must not share a Job, or the second tenant's scans run with
+    the first tenant's SAMMA_IO_ID. Without an id this is the target, so
+    Scanners made from Ingresses keep sharing as before."""
+    if samma_io_id in (None, ""):
+        return target
+    return "{0}/{1}".format(samma_io_id, target)
+
+
+def object_name(scanner, variant_name, target, samma_io_id=None):
     """<scanner>[-<variant>]-<hash>: always a valid, short DNS label."""
     if variant_name and variant_name != scanner:
         base = "{0}-{1}".format(scanner, variant_name)
     else:
         base = scanner
-    return "{0}-{1}".format(base, target_hash(target))
+    return "{0}-{1}".format(base, target_hash(tenant_key(target, samma_io_id)))
 
 
 def legacy_names(scanner, variant_name, target):
@@ -667,14 +679,16 @@ def _metadata(name, settings, labels, annotations, owner):
     return metadata
 
 
-def build_job(spec, variant, target, env, settings, owner=None, scanner_name=None, extra_labels=None):
+def build_job(spec, variant, target, env, settings, owner=None, scanner_name=None, extra_labels=None, samma_io_id=None):
     """A batch/v1 Job that runs the scanner once, now."""
     scanner_uid = owner.get("uid") if owner else None
     labels = base_labels(spec, variant, target, scanner_uid, extra_labels)
     annotations = {ANNOTATION_TARGET: target}
     if scanner_name:
         annotations[ANNOTATION_SCANNER_NAME] = scanner_name
-    name = object_name(spec.name, variant.name, target)
+    if samma_io_id not in (None, ""):
+        annotations[ANNOTATION_SAMMA_IO_ID] = str(samma_io_id)
+    name = object_name(spec.name, variant.name, target, samma_io_id)
     return {
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -683,14 +697,16 @@ def build_job(spec, variant, target, env, settings, owner=None, scanner_name=Non
     }
 
 
-def build_cronjob(spec, variant, target, env, settings, schedule, owner=None, scanner_name=None, extra_labels=None):
+def build_cronjob(spec, variant, target, env, settings, schedule, owner=None, scanner_name=None, extra_labels=None, samma_io_id=None):
     """A batch/v1 CronJob that runs the scanner on a schedule."""
     scanner_uid = owner.get("uid") if owner else None
     labels = base_labels(spec, variant, target, scanner_uid, extra_labels)
     annotations = {ANNOTATION_TARGET: target}
     if scanner_name:
         annotations[ANNOTATION_SCANNER_NAME] = scanner_name
-    name = object_name(spec.name, variant.name, target)
+    if samma_io_id not in (None, ""):
+        annotations[ANNOTATION_SAMMA_IO_ID] = str(samma_io_id)
+    name = object_name(spec.name, variant.name, target, samma_io_id)
     cron_spec = {
         "schedule": cron_schedule(schedule, target, settings.default_schedule),
         "concurrencyPolicy": "Forbid",

@@ -60,6 +60,7 @@ MAX_MESSAGE = 512
 MAX_HOST = 253
 MAX_SCHEME = 16
 MAX_TIER = 32
+MAX_SAMMA_IO_ID = 253
 
 _TARGET_RE = re.compile(TARGET_PATTERN)
 _SCANNER_RE = re.compile(SCANNER_PATTERN)
@@ -147,6 +148,7 @@ class Envelope(object):
             self.tier = None
         else:
             self.tier = _pattern(data, "tier", _TIER_RE, reason, limit=MAX_TIER)
+        self.samma_io_id = _samma_io_id(data)
 
     @property
     def key(self):
@@ -311,6 +313,19 @@ def _identifier(data, field, limit, reason):
     value = value.strip()
     if len(value) > limit or any(ch.isspace() for ch in value):
         raise Rejected(reason, "{0} must be at most {1} characters without whitespace".format(field, limit))
+    return value
+
+
+def _samma_io_id(data):
+    """The tenant id from the samma-io block (SAMMA_IO_ID of the scan Job),
+    or None. Optional: a message without one is keyed by target alone."""
+    samma = data.get("samma-io")
+    value = samma.get("id") if isinstance(samma, dict) else None
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or len(value) > MAX_SAMMA_IO_ID or any(ch.isspace() for ch in value):
+        return None
     return value
 
 

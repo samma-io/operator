@@ -191,7 +191,10 @@ other annotations under the prefix are ignored.
   `kubectl annotate ingress <name> -n <namespace> kopf.zalando.org/last-handled-configuration-`.
 
 Two Ingresses that serve the same host each get their own Scanners; the Jobs and CronJobs for the
-host are shared between them and go away when the last one does.
+host are shared between them and go away when the last one does. Scanners created through the API
+carry the tenant's `samma_io_id`, and their Jobs, CronJobs and ScanReports are keyed by that id as
+well as the target: two tenants that register the same host never share a scan, because a Job runs
+with a single `SAMMA_IO_ID`.
 
 Keep the annotations in git with the rest of the Ingress. Your scanning setup is then reviewed and
 versioned, and ArgoCD or Flux applies it.
