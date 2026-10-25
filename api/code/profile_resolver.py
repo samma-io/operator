@@ -1,5 +1,8 @@
 import logging
+import os
 from kubernetes.client.rest import ApiException
+
+DEFAULT_NAMESPACE = os.environ.get("SAMMA_NAMESPACE", "samma-io")
 
 
 def parse_scanner_spec(spec):
@@ -15,14 +18,16 @@ def parse_scanner_spec(spec):
     return (scanner, template)
 
 
-def resolve_profiles(profile_names, api_client):
+def resolve_profiles(profile_names, api_client, namespace=None):
     """Resolve profile names to a deduplicated list of (scanner, template_or_none) tuples.
 
-    Reads the scanner-profiles ConfigMap from the samma-io namespace.
-    Unknown profiles are logged as warnings and skipped.
+    Reads the scanner-profiles ConfigMap from the operator's namespace
+    (SAMMA_NAMESPACE, default samma-io). Unknown profiles are logged as
+    warnings and skipped.
     """
+    namespace = namespace or DEFAULT_NAMESPACE
     try:
-        cm = api_client.read_namespaced_config_map("scanner-profiles", "samma-io")
+        cm = api_client.read_namespaced_config_map("scanner-profiles", namespace)
         profile_data = cm.data or {}
     except ApiException as e:
         logging.warning("Could not read scanner-profiles ConfigMap: %s", e)

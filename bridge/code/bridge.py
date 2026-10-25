@@ -1,16 +1,32 @@
+"""The samma bridge: NATS in, ScanReports and TimescaleDB rows out.
+
+Subscribes to the scan subjects (NATS_SUBJECT and NATS_SUBJECT.>), stores
+every message in TimescaleDB when DATABASE_URL is set (as it always did),
+and turns schema v2 messages into ScanReports in SAMMA_NAMESPACE: the
+findings of a run are collected until its run message, then written in one
+go when the run succeeded, or recorded as a failed run with the previous
+findings kept. Metrics on :METRICS_PORT (default 9100).
+
+Everything that decides something lives in the samma_bridge package and
+has unit tests; this file is the asyncio wiring.
+"""
+
 import asyncio
-import json
 import logging
 import os
+import sys
 
-import nats
-import asyncpg
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+from samma_bridge import messages as message_schema  # noqa: E402
+from samma_bridge.accumulator import Accumulator  # noqa: E402
+from samma_bridge.config import Config  # noqa: E402
+from samma_bridge.metrics import BridgeMetrics, start_http_server  # noqa: E402
+from samma_bridge.pipeline import Pipeline  # noqa: E402
+from samma_bridge.scanners import ScannerIndex  # noqa: E402
 
-NATS_URL     = os.getenv("NATS_URL",     "nats://nats:4222")
-NATS_SUBJECT = os.getenv("NATS_SUBJECT", "samma-io.scan")
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://samma:samma@timescaledb:5432/samma")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("samma.bridge")
 
 CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS scan_results (
@@ -27,45 +43,152 @@ CREATE TABLE IF NOT EXISTS scan_results (
 SELECT create_hypertable('scan_results', 'time', if_not_exists => TRUE);
 """
 
+INSERT_ROW = """INSERT INTO scan_results
+   (host, port, status, type, scanner, samma_id, tags, raw)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"""
 
-async def main():
-    db = None
-    while db is None:
+TICK_SECONDS = 1.0
+
+
+async def connect_database(url):
+    import asyncpg  # third-party, installed in the image
+
+    while True:
         try:
-            db = await asyncpg.connect(DATABASE_URL)
-        except Exception as e:
-            logging.warning("DB not ready, retrying in 5s: %s", e)
+            db = await asyncpg.connect(url)
+            break
+        except Exception as exc:
+            log.warning("DB not ready, retrying in 5s: %s", exc)
             await asyncio.sleep(5)
     await db.execute(CREATE_TABLE)
-    logging.info("TimescaleDB ready")
+    log.info("TimescaleDB ready")
+    return db
 
-    nc = await nats.connect(NATS_URL)
-    logging.info("Connected to NATS, subscribing to %s", NATS_SUBJECT)
+
+async def connect_nats(config):
+    import nats  # third-party, installed in the image
+
+    options = config.nats_connect_options()
+    options.update({
+        "name": "samma-bridge",
+        "max_reconnect_attempts": -1,
+        "reconnect_time_wait": 2,
+        "error_cb": _nats_error,
+        "disconnected_cb": _nats_disconnected,
+        "reconnected_cb": _nats_reconnected,
+    })
+    nc = await nats.connect(**options)
+    how = "credentials file" if config.nats_creds else ("user {0}".format(config.nats_user) if config.nats_user else "no credentials")
+    log.info("Connected to NATS at %s with %s", config.nats_url, how)
+    return nc
+
+
+async def _nats_error(exc):
+    log.warning("NATS error: %s", exc)
+
+
+async def _nats_disconnected():
+    log.warning("NATS disconnected")
+
+
+async def _nats_reconnected():
+    log.info("NATS reconnected")
+
+
+async def main():
+    config = Config.from_env()
+    metrics = BridgeMetrics()
+    state = {"ready": False}
+    start_http_server(metrics.registry, config.metrics_port, ready=lambda: state["ready"])
+    log.info("samma bridge %s: metrics on :%d, namespace %s, ScanReports %s, TimescaleDB %s",
+             config.version, config.metrics_port, config.namespace,
+             "on" if config.scanreports_enabled else "off", "on" if config.database_enabled else "off")
+
+    db = await connect_database(config.database_url) if config.database_enabled else None
+
+    pipeline = None
+    if config.scanreports_enabled:
+        from samma_bridge.kube import KubeStore
+
+        store = KubeStore(config.namespace)
+        index = ScannerIndex(store.list_scanners, ttl_seconds=config.scanner_cache_seconds)
+        index.refresh(force=True)
+        pipeline = Pipeline(
+            config.namespace, store, index, metrics,
+            accumulator=Accumulator(config.straggler_wait_seconds, config.run_idle_timeout_seconds),
+        )
+
+    nc = await connect_nats(config)
+    writes = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    async def store_row(message):
+        if db is None:
+            return
+        row = message.legacy_row()
+        try:
+            await db.execute(INSERT_ROW, row["host"], row["port"], row["status"], row["type"],
+                             row["scanner"], row["samma_id"], row["tags"], row["raw"])
+            metrics.db_rows.inc()
+        except Exception as exc:
+            metrics.db_errors.inc()
+            log.error("Failed to store message: %s", exc)
+
+    def parse_counted(payload):
+        """messages.parse with the counters, for the TimescaleDB-only mode."""
+        try:
+            parsed = message_schema.parse(payload)
+        except message_schema.Rejected as exc:
+            metrics.rejected.inc(exc.reason)
+            log.warning("Rejected message (%s): %s", exc.reason, exc.detail)
+            return None
+        metrics.received.inc(parsed.kind)
+        return parsed
 
     async def handler(msg):
-        try:
-            data  = json.loads(msg.data.decode())
-            samma = data.get("samma-io", {})
-            await db.execute(
-                """INSERT INTO scan_results
-                   (host, port, status, type, scanner, samma_id, tags, raw)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)""",
-                data.get("host"),
-                str(data.get("port", "")),
-                data.get("status"),
-                data.get("type"),
-                samma.get("scanner"),
-                samma.get("id"),
-                json.dumps(samma.get("tags", [])),
-                json.dumps(data),
-            )
-            logging.info("Stored %s for %s", data.get("type"), data.get("host"))
-        except Exception as e:
-            logging.error("Failed to store message: %s", e)
+        if pipeline is None:
+            parsed = parse_counted(msg.data)
+            if parsed is not None:
+                await store_row(parsed)
+            return
+        message, finished = pipeline.handle(msg.data)
+        if message is None:
+            return
+        await store_row(message)
+        for item in finished:
+            await writes.put(item)
 
-    await nc.subscribe(NATS_SUBJECT, cb=handler)
-    logging.info("Bridge running")
-    await asyncio.sleep(float("inf"))
+    async def writer():
+        while True:
+            item = await writes.get()
+            try:
+                await loop.run_in_executor(None, pipeline.write, item)
+            finally:
+                writes.task_done()
+
+    async def ticker():
+        while True:
+            await asyncio.sleep(TICK_SECONDS)
+            for item in pipeline.tick():
+                await writes.put(item)
+
+    for subject in config.subjects:
+        await nc.subscribe(subject, cb=handler)
+        log.info("Subscribed to %s", subject)
+    state["ready"] = True
+
+    tasks = []
+    if pipeline is not None:
+        tasks.append(asyncio.create_task(writer()))
+        tasks.append(asyncio.create_task(ticker()))
+    log.info("Bridge running")
+    try:
+        await asyncio.Event().wait()
+    finally:
+        for task in tasks:
+            task.cancel()
+        await nc.drain()
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

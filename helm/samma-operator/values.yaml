@@ -1,16 +1,51 @@
+# The operator performs active security scans, from inside the cluster,
+# against the hosts the cluster's Ingresses serve (and against any target a
+# Scanner resource names). Only scan hosts you are allowed to scan. The chart
+# refuses to render the operator until this is true:
+#
+#   --set acceptScanningTerms=true
+acceptScanningTerms: false
+
 # Namespace to deploy into
 namespace: samma-io
 
-# Node architecture selector (set to "" to disable)
+# Create the Namespace as part of the release (the upstream default). Set to
+# false when the namespace exists already, for example when a GitOps tool or
+# `helm install --create-namespace` makes it.
+createNamespace: true
+
+# Node architecture selector (set to "" to disable). Releases publish the
+# operator, API and bridge images for amd64 and arm64; the classic scanner
+# images (nmap, nikto, tsunami) are amd64 only, so the selector stays.
 nodeSelector:
   kubernetes.io/arch: amd64
 
+# ServiceAccounts (README, "RBAC"). The operator gets a ClusterRole for
+# Ingresses, Scanners and events plus a namespaced Role for Jobs and
+# CronJobs; the API and the bridge get namespaced Roles; scanner pods run
+# under an account with no rights and no mounted token.
+serviceAccounts:
+  operator: samma-operator
+  api: samma-api
+  bridge: samma-bridge
+  scanner: samma-scanner
+
+# Images. Every component takes image, tag, digest and pullPolicy:
+#   tag     empty means the chart's appVersion (the release the chart came
+#           from), which is how a release pins its own images.
+#   digest  "sha256:..." renders image@digest instead of image:tag and wins
+#           over the tag. Release notes list the digest of every image.
 # Operator component
 operator:
-  image: mattiashem/samma-operator
-  tag: latest
-  digest: sha256:a1c718acbef760fb660a8bfec72a722261111e112ccfd57f5475344eca315613
-  pullPolicy: Always
+  image: ghcr.io/samma-io/samma-operator
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+  # The uid and gid the pod runs as. The image creates its user with uid 1000.
+  # A numeric id is what lets the kubelet verify runAsNonRoot; a named user
+  # in the image is refused with CreateContainerConfigError.
+  runAsUser: 1000
+  runAsGroup: 1000
   resources:
     requests:
       cpu: 100m
@@ -19,12 +54,83 @@ operator:
       cpu: 100m
       memory: 256Mi
 
-# API component
+# Scanner Jobs and CronJobs the operator creates (README, "Scan Jobs and CronJobs").
+scanners:
+  # The detect scanners (github.com/samma-io/detect) are released together,
+  # so one tag covers all of them: ghcr.io/samma-io/detect-<name>:<detectTag>.
+  # This is the detect release the operator was tested with.
+  detectTag: "2.0.0"
+  # The scanners detectTag applies to (the operator's own table has the same
+  # names). The classic images (nmap, nikto, tsunami) keep the defaults in
+  # operator/code/jobspec.py until they are rebuilt.
+  detectScanners:
+    - dns-scanner
+    - http-headers-scanner
+    - http-redirect-scanner
+    - port-scanner
+    - ssh-banner-scanner
+    - tls-scanner
+    - traceroute-scanner
+    - whois-scanner
+  # imagePrefix replaces the registry and organisation of every scanner
+  # image, keeping the image's base name (a mirror of the detect images
+  # becomes <imagePrefix>/detect-dns-scanner:<imageTag, else detectTag>; a
+  # classic image becomes <imagePrefix>/nmap:<imageTag, else its default tag>).
+  imagePrefix: ""
+  imageTag: ""
+  # imagePullPolicy for scanner containers; empty keeps the Kubernetes default.
+  pullPolicy: IfNotPresent
+  # A full reference for one scanner, with a tag or a digest. Wins over
+  # everything above for that scanner.
+  images: {}
+  #  nmap: ghcr.io/samma-io/nmap:v0.3
+  #  dns-scanner: ghcr.io/samma-io/detect-dns-scanner@sha256:0123abcd...
+  # The legacy base scanner ships its files with a filebeat sidecar that
+  # mounts the filebeat and live ConfigMaps. true creates them at startup;
+  # nothing else uses them, and the detect scanners publish to NATS.
+  legacyBaseScanner: false
+  # Requests and limits of every scanner container.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  # How many scan Jobs may run at the same time. A Scanner's first Jobs wait
+  # in a queue for a free slot; CronJob runs count towards the limit.
+  # 0 removes the limit.
+  maxConcurrentScans: 2
+  # activeDeadlineSeconds of every scan Job: a scan still running after this
+  # is stopped and marked failed.
+  scanDeadlineSeconds: 900
+  # Finished Jobs are removed after this many seconds.
+  ttlSecondsAfterFinished: 3600
+  # true adds the NET_RAW capability to the nmap containers (SYN scans).
+  # false keeps every scanner at drop ALL and asks nmap for connect scans
+  # through NMAP_UNPRIVILEGED; the nmap image has to honour that.
+  nmapRawSockets: false
+  # The uid scanner containers run as. The samma images create their user
+  # with useradd, which gives uid 1000.
+  runAsUser: 1000
+
+# Uninstall hook: a pre-delete Job that removes every Scanner (and the Jobs
+# and CronJobs of older releases) before the operator and the CRD go away,
+# so `helm uninstall` never blocks on CRD removal.
+hooks:
+  preDeleteCleanup: true
+
+# API component: the REST interface for targets and scanners. Not needed
+# when targets come from Ingress annotations or Scanner resources.
 api:
-  image: sammascanner/api
-  tag: latest
-  digest: sha256:0cb8f1b94292ea30d850c82db0f3dda02999595841d871431f77d3cb90185dfb
-  pullPolicy: Always
+  enabled: true
+  image: ghcr.io/samma-io/samma-api
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+  # The uid and gid the pod runs as (the image's user is uid 1000).
+  runAsUser: 1000
+  runAsGroup: 1000
   resources:
     requests:
       cpu: 100m
@@ -33,11 +139,16 @@ api:
       cpu: 200m
       memory: 512Mi
 
-# NATS message broker
+# NATS message broker (README, "NATS authentication")
 nats:
   image: nats
   tag: "2"
-  digest: sha256:023a08c46caa5aff878fb86841187bebfdad9a6e3c552ba5c1a1e18938bbf88a
+  digest: "sha256:023a08c46caa5aff878fb86841187bebfdad9a6e3c552ba5c1a1e18938bbf88a"
+  pullPolicy: IfNotPresent
+  # The nats image has no user of its own and the server needs no writable
+  # path, so it runs read-only as this unprivileged uid and gid.
+  runAsUser: 1000
+  runAsGroup: 1000
   resources:
     requests:
       cpu: 50m
@@ -45,17 +156,54 @@ nats:
     limits:
       cpu: 100m
       memory: 128Mi
+  # A Secret of your own with the keys scanner-password and bridge-password.
+  # Empty: the chart manages the Secret samma-nats-auth itself.
+  existingSecret: ""
+  auth:
+    # false runs NATS without authentication (the behaviour before this
+    # chart version): no Secret, no credentials in any pod.
+    enabled: true
+    # scanner may only publish on the scan subjects, bridge may only
+    # subscribe to them.
+    scannerUser: scanner
+    bridgeUser: bridge
+    # Passwords, alphanumeric (they travel in the scanner pods' NATS URL).
+    # Empty: kept from the Secret already in the cluster, else generated at
+    # install. `helm template` has no cluster to read from and generates new
+    # ones on every render; set them, or use existingSecret, when a GitOps
+    # tool renders the chart.
+    scannerPassword: ""
+    bridgePassword: ""
 
-# TimescaleDB — scan results storage
+# NetworkPolicies for NATS, the bridge and the scanner pods (README,
+# "Network policies"). Enforced only by a CNI that implements NetworkPolicy.
+networkPolicies:
+  enabled: true
+  # How the bridge reaches the Kubernetes API server, which is not a pod:
+  # by port to any address, or to the given CIDRs only.
+  apiServer:
+    ports: [443, 6443]
+    cidrs: []
+
+# TimescaleDB: scan results storage for Grafana. false installs no database
+# and no PVC; the bridge then writes ScanReports only (bridge.storeInTimescaleDB
+# is ignored).
 timescaledb:
+  enabled: true
   image: timescale/timescaledb
   tag: latest-pg15
-  digest: sha256:6343bdc87ca132c6b53acb26113a6bad1821d188fa39975a745f32ddd9757634
+  digest: "sha256:6343bdc87ca132c6b53acb26113a6bad1821d188fa39975a745f32ddd9757634"
+  pullPolicy: IfNotPresent
   storage: 10Gi
   # storageClass: "" # set to use a specific StorageClass
   db: samma
   user: samma
-  password: samma   # override in production!
+  # The database password. Required when enabled: set password (the chart
+  # puts it in the Secret samma-timescaledb) or existingSecret (a Secret of
+  # your own with the key "password"). Alphanumeric: it travels in the
+  # bridge's DATABASE_URL. There is no default.
+  password: ""
+  existingSecret: ""
   resources:
     requests:
       cpu: 100m
@@ -64,12 +212,25 @@ timescaledb:
       cpu: 500m
       memory: 512Mi
 
-# Bridge — NATS → TimescaleDB
+# Bridge: NATS to ScanReports and TimescaleDB (README, "Scan reports")
 bridge:
-  image: sammascanner/bridge
-  tag: latest
-  digest: sha256:043ae17d18926b5d0b57058a6b10d845f73723a6bb17eb65031162501eda42c3
-  pullPolicy: Always
+  image: ghcr.io/samma-io/samma-bridge
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+  # The uid and gid the pod runs as (the image's user is uid 1000).
+  runAsUser: 1000
+  runAsGroup: 1000
+  # Write ScanReport objects from schema v2 messages.
+  scanReports: true
+  # Insert every message into TimescaleDB as before. false leaves the
+  # bridge with no database at all; so does timescaledb.enabled=false.
+  storeInTimescaleDB: true
+  # How long the list of Scanners (used to drop messages for unknown
+  # targets) is cached, and how long a run waits for findings that are
+  # still in flight after its run message.
+  scannerCacheSeconds: 30
+  stragglerWaitSeconds: 30
   resources:
     requests:
       cpu: 50m

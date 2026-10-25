@@ -1,0 +1,252 @@
+name: Release
+
+# A release is a tag v<version> on main, for example v0.2.0. The tag has to
+# match version and appVersion in helm/samma-operator/Chart.yaml, so the
+# chart in git is the chart that ships. The workflow then
+#
+#   1. runs the unit tests and lints the chart,
+#   2. builds the operator, api and bridge images for linux/amd64 and
+#      linux/arm64 and pushes them to ghcr.io/<owner>/samma-<component>
+#      tagged <version> and <version>-<short sha> (never latest),
+#   3. packages the chart and pushes it to oci://ghcr.io/<owner>/charts,
+#   4. creates the GitHub release (or adds to one made by hand) with the
+#      chart archive, a rendered raw manifest and the digest of every image.
+#
+# <owner> is the repository owner in lower case: samma-io upstream, your
+# user on a fork.
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  REGISTRY: ghcr.io
+  CHART: helm/samma-operator
+
+jobs:
+  verify:
+    name: Verify the tag, run the tests, lint the chart
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      short_sha: ${{ steps.version.outputs.short_sha }}
+      owner: ${{ steps.version.outputs.owner }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the version from the tag and check Chart.yaml
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::tag $tag is not v<major>.<minor>.<patch>[-<prerelease>]"
+            exit 1
+          fi
+          chart_version="$(awk '/^version:/ {print $2}' "$CHART/Chart.yaml" | tr -d '"')"
+          app_version="$(awk '/^appVersion:/ {print $2}' "$CHART/Chart.yaml" | tr -d '"')"
+          if [ "$chart_version" != "$version" ] || [ "$app_version" != "$version" ]; then
+            echo "::error::$CHART/Chart.yaml has version $chart_version and appVersion $app_version but the tag says $version. Set both to $version first."
+            exit 1
+          fi
+          prerelease=false
+          case "$version" in *-*) prerelease=true ;; esac
+          {
+            echo "version=$version"
+            echo "short_sha=$(git rev-parse --short=7 HEAD)"
+            echo "owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # No third-party packages: the tests fake the API clients.
+      - name: Operator unit tests
+        run: python3 -m unittest discover -s operator/tests -t operator
+
+      - name: Bridge unit tests
+        run: python3 -m unittest discover -s bridge/tests -t bridge
+
+      - name: Byte-compile every module
+        run: python3 -m compileall -q operator/code bridge/code api/code
+
+      - uses: azure/setup-helm@v4
+
+      - name: Lint and render the chart
+        run: |
+          helm lint "$CHART" --set acceptScanningTerms=true --set timescaledb.password=lint
+          helm template samma "$CHART" --include-crds \
+            --set acceptScanningTerms=true --set timescaledb.password=lint > /dev/null
+          helm template samma "$CHART" --include-crds \
+            --set acceptScanningTerms=true --set timescaledb.enabled=false --set api.enabled=false > /dev/null
+
+  images:
+    name: Image samma-${{ matrix.component }}
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [operator, api, bridge]
+    env:
+      IMAGE: ghcr.io/${{ needs.verify.outputs.owner }}/samma-${{ matrix.component }}
+      VERSION: ${{ needs.verify.outputs.version }}
+      SHORT_SHA: ${{ needs.verify.outputs.short_sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.component }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ env.VERSION }}
+            ${{ env.IMAGE }}:${{ env.VERSION }}-${{ env.SHORT_SHA }}
+          labels: |
+            org.opencontainers.image.title=samma-${{ matrix.component }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+      - name: Record the digest
+        run: |
+          mkdir -p digests
+          printf '%s\t%s\n' "$IMAGE:$VERSION" "${{ steps.build.outputs.digest }}" \
+            > "digests/samma-${{ matrix.component }}.tsv"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-samma-${{ matrix.component }}
+          path: digests/
+          if-no-files-found: error
+
+  chart:
+    name: Chart and GitHub release
+    needs: [verify, images]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      OWNER: ${{ needs.verify.outputs.owner }}
+      SHORT_SHA: ${{ needs.verify.outputs.short_sha }}
+      PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-*
+          path: digests
+          merge-multiple: true
+
+      - name: Package the chart
+        run: |
+          mkdir -p dist
+          helm package "$CHART" --version "$VERSION" --app-version "$VERSION" --destination dist
+
+      - name: Push the chart to GHCR
+        run: |
+          printf '%s' "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login "$REGISTRY" --username "${{ github.actor }}" --password-stdin
+          helm push "dist/samma-operator-$VERSION.tgz" "oci://ghcr.io/$OWNER/charts" 2>&1 | tee dist/helm-push.log
+          grep -Eo 'sha256:[0-9a-f]{64}' dist/helm-push.log | head -1 > dist/chart-digest.txt
+          test -s dist/chart-digest.txt
+
+      # The same objects the chart installs, with the CRDs inline and the
+      # three passwords as placeholders, for people who apply YAML by hand.
+      - name: Render the raw manifest
+        run: |
+          {
+            echo "# samma-operator $VERSION, rendered from the Helm chart (helm template --include-crds)."
+            echo "# Set the three CHANGE-ME passwords before applying."
+            echo "# This deploys an operator that scans the hosts this cluster's Ingresses"
+            echo "# serve. Only scan hosts you are allowed to scan."
+            helm template samma "$CHART" --include-crds --namespace samma-io \
+              --set acceptScanningTerms=true \
+              --set timescaledb.password=CHANGE-ME-timescaledb-password \
+              --set nats.auth.scannerPassword=CHANGE-ME-scanner-password \
+              --set nats.auth.bridgePassword=CHANGE-ME-bridge-password
+          } > "dist/samma-operator-$VERSION.yaml"
+
+      - name: Write the release notes
+        run: |
+          chart_digest="$(cat dist/chart-digest.txt)"
+          {
+            echo "## Install"
+            echo
+            echo '```bash'
+            echo "helm install samma oci://ghcr.io/$OWNER/charts/samma-operator --version $VERSION \\"
+            echo "  --set acceptScanningTerms=true --set timescaledb.password=<password>"
+            echo '```'
+            echo
+            echo "Chart \`oci://ghcr.io/$OWNER/charts/samma-operator:$VERSION\`, digest \`$chart_digest\`."
+            echo
+            echo "## Images"
+            echo
+            echo "Tagged \`$VERSION\` and \`$VERSION-$SHORT_SHA\`, built for linux/amd64 and linux/arm64."
+            echo
+            echo "| Image | Digest |"
+            echo "|---|---|"
+            sort digests/*.tsv | while IFS="$(printf '\t')" read -r image digest; do
+              echo "| \`$image\` | \`$digest\` |"
+            done
+            echo
+            echo "Pin an image in your values with its digest, for example \`--set operator.digest=<digest>\`."
+            echo
+            echo "## CRDs"
+            echo
+            echo "\`helm upgrade\` does not change CustomResourceDefinitions. After an upgrade that ships a CRD change, apply the chart's copies:"
+            echo
+            echo '```bash'
+            echo "helm pull oci://ghcr.io/$OWNER/charts/samma-operator --version $VERSION --untar"
+            echo "kubectl apply -f samma-operator/crds/"
+            echo '```'
+            echo
+            echo "The raw manifest \`samma-operator-$VERSION.yaml\` below carries the CRDs inline. CHANGELOG.md lists what changed."
+          } > dist/notes.md
+          cat dist/notes.md
+
+      - name: Create or update the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          assets=("dist/samma-operator-$VERSION.tgz" "dist/samma-operator-$VERSION.yaml")
+          if gh release view "$tag" --json body --jq .body > dist/existing-notes.md 2>/dev/null; then
+            # A release made by hand created this tag: keep its text, add ours below.
+            { cat dist/existing-notes.md; echo; echo; cat dist/notes.md; } > dist/final-notes.md
+            gh release upload "$tag" "${assets[@]}" --clobber
+            gh release edit "$tag" --notes-file dist/final-notes.md
+          else
+            flags=()
+            if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+            gh release create "$tag" "${assets[@]}" --verify-tag \
+              --title "samma-operator $VERSION" --notes-file dist/notes.md "${flags[@]}"
+          fi

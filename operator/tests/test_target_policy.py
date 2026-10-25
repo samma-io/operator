@@ -25,7 +25,7 @@ if CODE_DIR not in sys.path:
 import target_policy as tp  # noqa: E402
 
 CRD_FILES = [
-    os.path.join(REPO_DIR, "helm", "samma-operator", "templates", "crd.yaml"),
+    os.path.join(REPO_DIR, "helm", "samma-operator", "crds", "scanner.samma.io.yaml"),
     os.path.join(REPO_DIR, "manifest", "samma-operator.yaml"),
 ]
 

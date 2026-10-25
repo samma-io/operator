@@ -1,3 +1,5 @@
+{{- if .Values.api.enabled }}
+{{- include "samma.consentGate" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -12,20 +14,34 @@ spec:
       labels:
         app: samma-api
     spec:
-      serviceAccountName: samma-operator
+      serviceAccountName: {{ .Values.serviceAccounts.api }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.api.runAsUser }}
+        runAsGroup: {{ .Values.api.runAsGroup }}
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: samma-api
-          image: {{ .Values.api.image }}:{{ .Values.api.tag }}{{ if .Values.api.digest }}@{{ .Values.api.digest }}{{ end }}
+          image: {{ include "samma.image" (dict "spec" .Values.api "chart" .Chart) }}
           imagePullPolicy: {{ .Values.api.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
           env:
+            - name: SAMMA_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: SAMMA_IO_ID
               value: {{ .Values.config.sammaIoId | quote }}
             - name: SAMMA_IO_TAGS
@@ -56,3 +72,4 @@ spec:
       port: 8080
       targetPort: 8080
   type: ClusterIP
+{{- end }}

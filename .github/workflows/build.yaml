@@ -1,5 +1,10 @@
 name: Build and Push Docker Images
 
+# Every push to main builds the operator, api and bridge images and pushes
+# them to ghcr.io/<owner>/samma-<component> tagged with the git sha and
+# latest. Pull requests build without pushing. Releases (tags v*) are made
+# by release.yaml, which never moves latest.
+
 on:
   push:
     branches: [main]
@@ -10,15 +15,48 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  build-operator:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # No third-party packages: the tests fake the API clients.
+      - name: Operator unit tests
+        run: python3 -m unittest discover -s operator/tests -t operator
+
+      - name: Bridge unit tests
+        run: python3 -m unittest discover -s bridge/tests -t bridge
+
+      - name: Byte-compile every module
+        run: python3 -m compileall -q operator/code bridge/code api/code
+
+      - uses: azure/setup-helm@v4
+
+      - name: Lint and render the chart
+        run: |
+          helm lint helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint
+          helm template samma helm/samma-operator --include-crds \
+            --set acceptScanningTerms=true --set timescaledb.password=lint > /dev/null
+
+  build-images:
+    name: Image samma-${{ matrix.component }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [operator, api, bridge]
     steps:
       - uses: actions/checkout@v4
 
       - name: Log in to Container registry
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -29,47 +67,17 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/samma-operator
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/samma-${{ matrix.component }}
+          flavor: |
+            latest=false
           tags: |
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push operator image
-        uses: docker/build-push-action@v5
+      - name: Build and push
+        uses: docker/build-push-action@v6
         with:
-          context: operator
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-
-  build-api:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Log in to Container registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/samma-api
-          tags: |
-            type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Build and push API image
-        uses: docker/build-push-action@v5
-        with:
-          context: api
+          context: ${{ matrix.component }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

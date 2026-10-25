@@ -2,5 +2,4 @@ kopf>=1.37
 kubernetes>=29.0
 redis>=5.0
 PyYAML>=6.0
-Jinja2>=3.1
 requests>=2.31

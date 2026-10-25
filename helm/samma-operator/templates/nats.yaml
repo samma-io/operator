@@ -1,3 +1,4 @@
+{{- include "samma.consentGate" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -11,19 +12,56 @@ spec:
     metadata:
       labels:
         app: nats
+      annotations:
+        # A changed server config or password rolls the pod.
+        checksum/nats-config: {{ include (print $.Template.BasePath "/nats-auth.yaml") . | sha256sum }}
     spec:
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.nats.runAsUser }}
+        runAsGroup: {{ .Values.nats.runAsGroup }}
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: nats
-          image: {{ .Values.nats.image }}:{{ .Values.nats.tag }}{{ if .Values.nats.digest }}@{{ .Values.nats.digest }}{{ end }}
+          image: {{ include "samma.image" (dict "spec" .Values.nats "chart" .Chart) }}
+          imagePullPolicy: {{ .Values.nats.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          args: ["--config", "/etc/nats/nats-server.conf"]
           ports:
             - containerPort: 4222
             - containerPort: 8222
+          {{- if .Values.nats.auth.enabled }}
+          env:
+            - name: SAMMA_NATS_SCANNER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.nats.existingSecret | default "samma-nats-auth" }}
+                  key: scanner-password
+            - name: SAMMA_NATS_BRIDGE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.nats.existingSecret | default "samma-nats-auth" }}
+                  key: bridge-password
+          {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nats
+              readOnly: true
           resources:
             {{- toYaml .Values.nats.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: nats-config
 ---
 apiVersion: v1
 kind: Service

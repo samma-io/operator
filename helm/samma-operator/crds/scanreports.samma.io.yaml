@@ -1,0 +1,198 @@
+# ScanReport: the result of one scanner against one target, written by the
+# bridge and, for a scan Job that died before it could report, by the
+# operator (README, "Scan reports"). Keep the schema in sync with
+# manifest/samma-operator.yaml; operator/tests/test_scanreport.py compares
+# the two copies and bridge/tests/test_reports.py checks the limits.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: scanreports.samma.io
+spec:
+  scope: Namespaced
+  group: samma.io
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Target
+          type: string
+          jsonPath: .spec.target
+        - name: Scanner
+          type: string
+          jsonPath: .spec.scanner
+        - name: Outcome
+          type: string
+          jsonPath: .status.lastRun.outcome
+        - name: High
+          type: integer
+          jsonPath: .status.summary.high
+        - name: LastSuccess
+          type: date
+          jsonPath: .status.lastSuccessAt
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - target
+                - scanner
+              properties:
+                target:
+                  # The same expression as Scanner.spec.target.
+                  type: string
+                  maxLength: 253
+                  pattern: '^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])|[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{0,4}){2,7})$'
+                scanner:
+                  type: string
+                  maxLength: 63
+                  pattern: '^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$'
+                template:
+                  # The scanner variant (nmap has port, http and tls); absent
+                  # when the scanner has one.
+                  type: string
+                  maxLength: 63
+                  pattern: '^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$'
+                tier:
+                  type: string
+                  maxLength: 32
+                  pattern: '^[a-z0-9-]{1,32}$'
+            status:
+              type: object
+              properties:
+                scannerVersion:
+                  type: string
+                  maxLength: 64
+                lastRun:
+                  # The most recent run, whatever its outcome. Findings and
+                  # summary are replaced only when outcome is succeeded; a
+                  # failed or timed_out run leaves them as they were.
+                  type: object
+                  required:
+                    - runId
+                    - outcome
+                    - finishedAt
+                  properties:
+                    runId:
+                      # The scanner pod's name (its hostname).
+                      type: string
+                      maxLength: 253
+                    jobName:
+                      type: string
+                      maxLength: 253
+                    startedAt:
+                      type: string
+                      format: date-time
+                    finishedAt:
+                      type: string
+                      format: date-time
+                    outcome:
+                      type: string
+                      enum:
+                        - succeeded
+                        - failed
+                        - timed_out
+                    message:
+                      type: string
+                      maxLength: 512
+                lastSuccessAt:
+                  type: string
+                  format: date-time
+                summary:
+                  type: object
+                  properties:
+                    critical:
+                      type: integer
+                      minimum: 0
+                    high:
+                      type: integer
+                      minimum: 0
+                    medium:
+                      type: integer
+                      minimum: 0
+                    low:
+                      type: integer
+                      minimum: 0
+                    info:
+                      type: integer
+                      minimum: 0
+                findings:
+                  # Capped by the bridge: 200 entries, 256 KiB serialised,
+                  # evidence summaries only (never a response body).
+                  type: array
+                  maxItems: 200
+                  items:
+                    type: object
+                    required:
+                      - checkId
+                      - severity
+                      - title
+                      - endpoint
+                    properties:
+                      checkId:
+                        # Stable per scanner, never renamed; a renamed check
+                        # is a new check. For example SAMMA-TLS-PROTOCOL-DEPRECATED.
+                        type: string
+                        pattern: '^[A-Z0-9-]{3,80}$'
+                      severity:
+                        type: string
+                        enum:
+                          - CRITICAL
+                          - HIGH
+                          - MEDIUM
+                          - LOW
+                          - INFO
+                      title:
+                        type: string
+                        maxLength: 200
+                      endpoint:
+                        type: object
+                        required:
+                          - host
+                        properties:
+                          host:
+                            type: string
+                            maxLength: 253
+                          port:
+                            type: integer
+                            minimum: 1
+                            maximum: 65535
+                          scheme:
+                            type: string
+                            maxLength: 16
+                      evidence:
+                        type: string
+                        maxLength: 1024
+                      remediation:
+                        type: string
+                        maxLength: 1024
+                      references:
+                        type: array
+                        maxItems: 10
+                        items:
+                          type: string
+                          maxLength: 512
+                      cveIds:
+                        type: array
+                        maxItems: 50
+                        items:
+                          type: string
+                          pattern: '^CVE-\d{4}-\d{4,}$'
+                      compliance:
+                        type: array
+                        maxItems: 20
+                        items:
+                          type: string
+                          maxLength: 64
+  names:
+    kind: ScanReport
+    plural: scanreports
+    singular: scanreport
+    shortNames:
+      - sr

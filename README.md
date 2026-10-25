@@ -6,7 +6,8 @@
 
 Samma is a Kubernetes operator that deploys open-source security scanners into your cluster. When
 a scan target is registered, the operator immediately runs a one-time Job and schedules a weekly
-CronJob. Results are published to NATS and stored in TimescaleDB, and you read them in Grafana.
+CronJob. Results are published to NATS; the bridge writes them as `ScanReport` objects you can
+read with kubectl (see [Scan reports](#scan-reports)) and stores them in TimescaleDB for Grafana.
 
 The system has two components:
 
@@ -41,42 +42,52 @@ describes every scanner and what to use it for.
 PUT /target  →  API creates Scanner CRDs  →  Operator watches CRDs
                                                      │
                                           ┌──────────┴──────────┐
-                                     deployJob()          deployCron()
-                                     (runs now)           (weekly 0 0 * * 0)
+                                    Job (runs now,         CronJob (weekly,
+                                    bounded queue)         hashed minute)
                                           │                     │
                                     Scanner Pod          CronJob Pod
                                           │
-                                        NATS (samma-io.scan)
+                                        NATS (samma-io.scan.<scanner>, authenticated)
                                           │
                                        Bridge
-                                          │
-                                     TimescaleDB
+                                       │     │
+                            ScanReport CRs   TimescaleDB
+                            (kubectl get sr)  (Grafana)
 ```
 
 ### Scanner types
 
 There are two scanner families:
 
-**detect** — Modern scanners (`ghcr.io/samma-io/detect-*:latest`). Single container, results published directly to NATS.
+**detect**: the modern scanners (`ghcr.io/samma-io/detect-*`, from
+[samma-io/detect](https://github.com/samma-io/detect)). Single container, results published
+directly to NATS in schema v2, so they have [ScanReports](#scan-reports).
+
+The detect scanners are released together, and the chart pins all of them to one tag,
+`scanners.detectTag` (default `2.0.0`, the detect release this operator was tested with). Point
+them at a mirror with `scanners.imagePrefix` (and `scanners.imageTag`), or pin one scanner to a
+tag or a digest with `scanners.images.<scanner>` (see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs)).
 
 | Scanner | Image |
 |---|---|
-| `port-scanner` | `ghcr.io/samma-io/detect-port-scanner:latest` |
-| `dns-scanner` | `ghcr.io/samma-io/detect-dns-scanner:latest` |
-| `http-headers-scanner` | `ghcr.io/samma-io/detect-http-headers-scanner:latest` |
-| `tls-scanner` | `ghcr.io/samma-io/detect-tls-scanner:latest` |
-| `http-redirect-scanner` | `ghcr.io/samma-io/detect-http-redirect-scanner:latest` |
-| `traceroute-scanner` | `ghcr.io/samma-io/detect-traceroute-scanner:latest` |
-| `ssh-banner-scanner` | `ghcr.io/samma-io/detect-ssh-banner-scanner:latest` |
-| `whois-scanner` | `ghcr.io/samma-io/detect-whois-scanner:latest` |
+| `port-scanner` | `ghcr.io/samma-io/detect-port-scanner:2.0.0` |
+| `dns-scanner` | `ghcr.io/samma-io/detect-dns-scanner:2.0.0` |
+| `http-headers-scanner` | `ghcr.io/samma-io/detect-http-headers-scanner:2.0.0` |
+| `tls-scanner` | `ghcr.io/samma-io/detect-tls-scanner:2.0.0` |
+| `http-redirect-scanner` | `ghcr.io/samma-io/detect-http-redirect-scanner:2.0.0` |
+| `traceroute-scanner` | `ghcr.io/samma-io/detect-traceroute-scanner:2.0.0` |
+| `ssh-banner-scanner` | `ghcr.io/samma-io/detect-ssh-banner-scanner:2.0.0` |
+| `whois-scanner` | `ghcr.io/samma-io/detect-whois-scanner:2.0.0` |
 
-**classic** — Traditional scanners (`sammascanner/*`). Single container, NATS vars passed through env.
+**classic**: the traditional scanners (`sammascanner/*`). Single container, NATS vars passed
+through env. Their image references are the defaults built into `operator/code/jobspec.py`; they
+move to rebuilt, pinned images in a later release.
 
 | Scanner | Image | Templates |
 |---|---|---|
-| `nikto` | `sammascanner/nikto:v0.2` | — |
+| `nikto` | `sammascanner/nikto:v0.2` | none |
 | `nmap` | `sammascanner/nmap:v0.2` | `port`, `http`, `tls` |
-| `tsunami` | `sammascanner/tsunami:v0.1` | — |
+| `tsunami` | `sammascanner/tsunami:v0.1` | none |
 
 ---
 
@@ -109,8 +120,10 @@ spec:
 kubectl apply -f manifest/test/nmap.yaml
 ```
 
-The operator will immediately create a Job and a weekly CronJob for each scanner. The target
-must pass [target validation](#target-validation).
+The operator creates a Job now and a weekly CronJob for each scanner, both owned by the Scanner
+(see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs)). The target must pass
+[target validation](#target-validation). A scanner can be named with a template, as in
+`scanners: ["nmap/http"]`, or the `templates` list can select variants for every scanner.
 
 ### 3. Ingress annotations
 
@@ -144,7 +157,7 @@ spec:
 
 | Annotation (`samma-io.alpha.kubernetes.io/…`) | What it does |
 |---|---|
-| `enable` | Turns scanning on. Any value counts, even `"false"`, so remove the annotation to turn it off. |
+| `enable` | Turns scanning on. `"false"`, `"0"`, `"no"` and `"off"` turn it off, and so does removing the annotation. |
 | `profile` | Comma-separated [profiles](#scanner-profiles). Takes priority over `scanners`. |
 | `scanners` | An explicit scanner list, used when there is no `profile`. |
 | `scheduler` | Cron expression for the repeat scan. The default is weekly. |
@@ -153,22 +166,35 @@ spec:
 | `samma_io_json` | Extra JSON added to every finding. |
 | `compliance` | Compliance tags, e.g. `pci-dss`. samma.io runs the matching validated vendor scanner. Needs the [samma.io connection](#connect-to-sammaio). |
 
-Without `profile` or `scanners`, the `default` profile is used.
+Without `profile` or `scanners`, the `default` profile is used. Only `scheduler`, `samma_io_id`,
+`samma_io_tags`, `samma_io_json`, `write_to_file` and `elasticsearch` are copied into the Scanner;
+other annotations under the prefix are ignored.
 
 #### Lifecycle
 
-- **Ingress created:** one `Scanner` per scanner and host, named
-  `<scanner>-<host-with-dashes>[-<template>]` in `samma-io`. Each one runs a Job now and a CronJob on
-  its schedule.
-- **Ingress deleted:** those Scanners are removed, and samma.io stops its external and vendor scans
-  for the host. Ingress-created Scanners carry no `samma_io_id`, so their Jobs and CronJobs keep the
-  legacy `<scanner>-<host-with-dashes>[-<template>]` names. Every Job and CronJob created after this
-  fix carries an `ownerReferences` entry pointing at its Scanner, so Kubernetes garbage-collects the
-  two together. Only objects created by a pre-fix operator are ever left behind; remove those by
-  hand with
-  `kubectl -n samma-io get cronjobs,jobs -o name | grep <host-with-dashes> | xargs kubectl -n samma-io delete`.
-- **Annotations changed:** they are read when the Ingress is created. Recreate the Ingress
-  (`kubectl replace --force -f ingress.yaml`) to apply new annotations.
+- **Ingress created:** one `Scanner` per scanner and host in the operator's namespace, named
+  `<scanner>[-<template>]-<hash>` where the hash covers the Ingress and the host. Each Scanner
+  carries the labels `samma.io/ingress-namespace` and `samma.io/ingress-name` and the annotation
+  `samma.io/ingress: <namespace>/<name>`. Each one runs a Job now and a CronJob on its schedule.
+- **Annotations or hosts changed:** the operator reconciles. New hosts get Scanners, removed hosts
+  lose theirs, and a changed `scheduler` or tag updates the Scanner, which recreates its CronJob.
+  Setting `enable` to `"false"` or removing it deletes the Scanners.
+- **Ingress deleted:** the Scanners are removed by label, their Jobs and CronJobs follow through
+  Kubernetes garbage collection, and samma.io stops its external and vendor scans for the host.
+  An Ingress in the operator's own namespace also owns its Scanners through `ownerReferences`;
+  Kubernetes does not allow an owner in another namespace, which is why the labels exist.
+- **Every other Ingress is left alone.** The handlers match only Ingresses that carry the `enable`
+  annotation, and kopf's own bookkeeping annotation
+  (`kopf.zalando.org/last-handled-configuration`) is stored only on those; it goes away with the
+  Scanners when the annotation is removed. Operators up to 0.2.1 wrote it on every Ingress in the
+  cluster: such a leftover is removed the next time that Ingress changes, or by hand with
+  `kubectl annotate ingress <name> -n <namespace> kopf.zalando.org/last-handled-configuration-`.
+
+Two Ingresses that serve the same host each get their own Scanners; the Jobs and CronJobs for the
+host are shared between them and go away when the last one does. Scanners created through the API
+carry the tenant's `samma_io_id`, and their Jobs, CronJobs and ScanReports are keyed by that id as
+well as the target: two tenants that register the same host never share a scan, because a Job runs
+with a single `SAMMA_IO_ID`.
 
 Keep the annotations in git with the rest of the Ingress. Your scanning setup is then reviewed and
 versioned, and ArgoCD or Flux applies it.
@@ -206,7 +232,295 @@ The checks live in `operator/code/target_policy.py` and have unit tests in `oper
 
 ```bash
 python3 -m unittest discover -s operator/tests -t operator
+python3 -m unittest discover -s bridge/tests -t bridge
 ```
+
+---
+
+## Scan Jobs and CronJobs
+
+Jobs and CronJobs are built as objects in `operator/code/jobspec.py` from a table of scanner
+definitions (image, entrypoint per variant, extra environment); nothing is rendered from YAML
+templates any more. Every object the operator creates carries these labels and annotations:
+
+| Label or annotation | Value |
+|---|---|
+| `app.kubernetes.io/managed-by` | `samma-operator` |
+| `samma.io/role` | `scanner`; the [network policy](#network-policies) for scan pods selects it |
+| `samma.io/scanner` | the scanner, for example `nmap` |
+| `samma.io/template` | the variant, for example `port`; equal to the scanner name when it has one variant |
+| `samma.io/target-hash` | the first eight hex characters of `sha256(target)` |
+| `samma.io/scanner-uid` | the uid of the owning Scanner |
+| `samma.io/ingress-namespace`, `samma.io/ingress-name` | on everything that came from an Ingress |
+| `samma.io/target` (annotation) | the target |
+| `samma.io/scanner-name` (annotation) | the Scanner's name |
+| `samma.io/spec-hash` (annotation, CronJobs) | hash of the built spec; a change recreates the CronJob |
+
+### Names
+
+Jobs and CronJobs are named `<scanner>[-<template>]-<target hash>`, for example
+`nmap-port-3f2a9b1c` or `tls-scanner-9c0ffee1`. The old names carried the target with dots turned
+into hyphens, which is not a valid name for an IPv6 address and is too long for many hostnames.
+The target itself is in the `samma.io/target` annotation:
+
+```bash
+kubectl -n samma-io get jobs,cronjobs -l samma.io/scanner=nmap \
+  -o custom-columns='NAME:.metadata.name,TARGET:.metadata.annotations.samma\.io/target'
+```
+
+### Ownership and cleanup
+
+Every Job and CronJob has an `ownerReference` to its Scanner, so deleting the Scanner removes them
+through Kubernetes garbage collection. The kopf delete handlers are `optional=True`: they add no
+finalizers, so a Scanner or an Ingress can always be deleted, with or without the operator running.
+Finished Jobs are removed after `ttlSecondsAfterFinished` (default one hour), a Job retries once
+(`backoffLimit: 1`) and is stopped after `activeDeadlineSeconds` (default 900 seconds).
+
+When a Scanner is deleted the operator also removes Jobs and CronJobs an older version created
+under the pre-hash names, so an upgrade does not leave them behind.
+
+`helm uninstall` runs a pre-delete hook Job (`operator/code/uninstall_cleanup.py`) that deletes
+every Scanner and every leftover scanner Job and CronJob in the namespace before the operator and
+the CRD are removed, so removal never blocks on the CRD. Turn it off with `hooks.preDeleteCleanup=false`
+or `helm uninstall --no-hooks`.
+
+### Pod security
+
+Scanner pods run under the `samma-scanner` ServiceAccount, which has no rights, with
+`automountServiceAccountToken: false`. Every scanner container runs with:
+
+- `runAsNonRoot: true` and `runAsUser` from `scanners.runAsUser` (default 1000, the uid `useradd`
+  gives the `samma` user in the images),
+- `seccompProfile: RuntimeDefault`,
+- `capabilities: drop: [ALL]`,
+- `readOnlyRootFilesystem: true` with `emptyDir` volumes at `/out` and `/tmp`,
+- requests and limits from `scanners.resources`,
+- `allowPrivilegeEscalation: false`, except for `nikto` and `nmap`: those images run the tool
+  through `sudo`, which needs privilege escalation. The flag goes away once the images run the tool
+  directly. The detect scanners and tsunami do not get it.
+
+nmap SYN scans need raw sockets. With `scanners.nmapRawSockets=false` (the default) no capability
+is added and the nmap containers get `NMAP_UNPRIVILEGED=1`, which nmap reads itself and which makes
+it use connect scans; the nmap image has to pass that through (and use `-sT` for the port scan).
+With `true` the nmap containers get `NET_RAW` and `NMAP_PRIVILEGED=1`, which is today's behaviour.
+Only nmap ever receives the capability.
+
+The legacy `base` scanner keeps its filebeat sidecar; it is the only multi-container scanner. The
+sidecar mounts the `filebeat` and `live` ConfigMaps, which the operator creates at startup only
+with `scanners.legacyBaseScanner: true` (`SAMMA_LEGACY_BASE_SCANNER`). Nothing else uses them, so
+by default they are not created, and a Scanner that asks for `base` gets a `LegacyScanner` warning
+event instead of a pod that never starts.
+
+### Concurrency and scheduling
+
+A Scanner's first Jobs go through a queue. At most `scanners.maxConcurrentScans` scan Jobs
+(default 2) run at the same time in the namespace; Jobs started by CronJobs count too. Queued
+Jobs start in order as slots free up, checked every `SAMMA_QUEUE_INTERVAL_SECONDS` (default 15).
+A Scanner whose first scan is waiting carries the annotation `samma.io/initial-scan: queued` and
+an event `ScanQueued`; it becomes `launched` once every Job exists. After an operator restart,
+Scanners still marked `queued` are queued again. `maxConcurrentScans: 0` removes the limit.
+
+CronJobs use `concurrencyPolicy: Forbid`, keep one successful and one failed Job, and skip a run
+that could not start within `startingDeadlineSeconds: 600`. A Scanner on the default weekly
+schedule gets a minute derived from the target hash, so many targets registered on the same day do
+not all fire in the same minute; a `scheduler` you set is used unchanged.
+
+Changing a Scanner's `spec` recreates its CronJobs. The first Job is not run again.
+
+---
+
+## RBAC
+
+The operator no longer binds to `cluster-admin`. Four ServiceAccounts are created
+(`serviceAccounts.*` in the chart):
+
+| ServiceAccount | Rights |
+|---|---|
+| `samma-operator` | ClusterRole: Ingresses get, list, watch, patch (kopf keeps its progress and diff base as annotations on the opted-in Ingresses, and only on those); `scanner.samma.io` full; `scanreports.samma.io` get, list, watch, create, update, patch (it records failed scan Jobs there, see [Scan reports](#scan-reports)); events create, patch; CustomResourceDefinitions list, watch. Role in the namespace: Jobs and CronJobs full; ConfigMaps get, list, watch, create, patch; Secrets get, list; Pods get, list. |
+| `samma-api` | Role: `scanner.samma.io` get, list, create, patch, delete; ConfigMaps get, list. |
+| `samma-bridge` | Role: `scanreports.samma.io` get, list, watch, create, update, patch (it writes the reports); `scanner.samma.io` get, list, watch (it drops results for targets no Scanner has). |
+| `samma-scanner` | Nothing. Scanner pods run under it with no token mounted. |
+
+The operator runs in the namespace it is deployed to: `SAMMA_NAMESPACE` is set from the pod's
+own namespace through the Downward API, and the API and the bridge read the same variable. The
+raw manifest in `manifest/samma-operator.yaml` carries the same ServiceAccounts, roles and bindings.
+
+---
+
+## Scan reports
+
+Every scan result is also a Kubernetes object: a `ScanReport` (`scanreports.samma.io/v1alpha1`,
+short name `sr`), one per scanner and target, in the operator's namespace. Nothing else is needed
+to read results, no database and no dashboard:
+
+```bash
+kubectl -n samma-io get scanreports
+NAME                   TARGET            SCANNER       OUTCOME     HIGH   LASTSUCCESS
+tls-scanner-d0c43d38   api.example.com   tls-scanner   succeeded   1      3m
+kubectl -n samma-io get sr tls-scanner-d0c43d38 -o yaml
+```
+
+A report has the same name as the scan Job, `<scanner>[-<template>]-<target hash>`, the same
+labels (`samma.io/scanner`, `samma.io/template`, `samma.io/target-hash`, and the Ingress labels
+when the target came from an Ingress), the target in the `samma.io/target` annotation, and the
+Scanners for that target and scanner as its owners, so it is garbage collected with them.
+
+```yaml
+apiVersion: samma.io/v1alpha1
+kind: ScanReport
+metadata:
+  name: tls-scanner-d0c43d38
+  namespace: samma-io
+  labels:
+    samma.io/scanner: tls-scanner
+    samma.io/template: tls-scanner
+    samma.io/target-hash: d0c43d38
+    samma.io/ingress-namespace: shop
+    samma.io/ingress-name: api
+  annotations:
+    samma.io/target: api.example.com
+  ownerReferences:
+    - apiVersion: samma.io/v1
+      kind: Scanner
+      name: tls-scanner-9c0ffee1
+spec:
+  target: api.example.com
+  scanner: tls-scanner
+status:
+  scannerVersion: "1.4.0"
+  lastRun:
+    runId: tls-scanner-d0c43d38-x7k2p      # the scanner pod
+    startedAt: "2026-10-15T02:00:04Z"
+    finishedAt: "2026-10-15T02:00:21Z"
+    outcome: succeeded                     # succeeded, failed or timed_out
+  lastSuccessAt: "2026-10-15T02:00:21Z"
+  summary: {critical: 0, high: 1, medium: 1, low: 0, info: 2}
+  findings:
+    - checkId: SAMMA-TLS-PROTOCOL-DEPRECATED
+      severity: HIGH
+      title: Deprecated TLS protocol version negotiated
+      endpoint: {host: api.example.com, port: 443, scheme: https}
+      evidence: negotiated TLSv1
+      remediation: Disable SSLv3, TLS 1.0 and TLS 1.1 in the ingress controller or server TLS options.
+      references: ["https://datatracker.ietf.org/doc/html/rfc8996"]
+      compliance: ["pci-dss:4.2.1"]
+```
+
+### How a report is written
+
+The bridge subscribes to NATS. The detect scanners publish messages in schema v2
+(`samma.io/scan/v2`, from [samma-io/detect](https://github.com/samma-io/detect)): one `finding`
+per failing check with a stable `checkId`, a `severity` (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`,
+`INFO`), the endpoint, a short `evidence` summary and a `remediation`, and exactly one `run`
+message at the end with the outcome. The bridge collects the findings of a run and, when the run
+message arrives:
+
+- **outcome `succeeded`:** the report's findings are replaced by this run's, `summary` is
+  recomputed and `lastSuccessAt` is set. A clean scan produces an empty list, which is how a
+  fixed finding disappears.
+- **outcome `failed` or `timed_out`:** only `lastRun` is written. The previous findings stay, so
+  a scan that could not run never looks like a scan that found nothing.
+
+A run message that reports more findings than the bridge received waits 30 seconds for the rest
+(`bridge.stragglerWaitSeconds`) and is then recorded as `failed` with the message
+`bridge received N of M findings`, for the same reason: an incomplete picture must not replace a
+complete one.
+
+Scan Jobs can also die before they send anything: an image that cannot be pulled, an out-of-memory
+kill, or the Job deadline hitting a pod that was still starting. The operator checks finished
+scan Jobs every queue tick and writes `lastRun` for the ones that failed (`outcome: failed`, or
+`timed_out` when the Job's condition reason is `DeadlineExceeded`), creating the report with only
+its `spec` when there is none yet. So a target that never had a successful scan still shows up,
+with the reason. Each Job is annotated `samma.io/outcome-recorded: "true"` once that is done.
+
+### What goes in, what stays out
+
+Messages are validated against the schema before anything is written (wrong types, unknown
+severities, malformed check ids and CVE ids are rejected and counted), and a message whose target
+is not the target of a current Scanner in the namespace is dropped. That means a pod that can
+reach NATS cannot plant findings for a host nobody asked to scan. Findings are deduplicated on
+check id plus endpoint, kept to 200 per report (highest severity first) and to 256 KiB serialised
+(evidence is shortened first, then `INFO` findings are dropped). Evidence is a summary of at most
+1 KiB; response bodies never enter a report. The scanner's raw record is not stored in the report
+either; it still goes to TimescaleDB.
+
+Only scanners that speak schema v2 get reports. Today those are the detect scanners; the classic
+scanners (`nmap`, `nikto`, `tsunami`) still publish v1 messages, which the bridge stores in
+TimescaleDB exactly as before and never turns into a report.
+
+The ScanReport CRD carries an OpenAPI schema with these limits, so a malformed report is refused
+by the API server. The bridge exposes Prometheus metrics on port 9100 (`/metrics`; messages
+received, rejected and dropped by reason, reports written by outcome, finalise latency) and
+readiness on `/readyz`. `bridge.scanReports=false` turns report writing off and
+`bridge.storeInTimescaleDB=false` removes the database connection; the bridge works with either
+one alone.
+
+---
+
+## NATS authentication
+
+NATS no longer accepts anonymous connections. The chart configures two users:
+
+| User | May | May not |
+|---|---|---|
+| `scanner` | publish on `samma-io.scan` and `samma-io.scan.>` | subscribe to anything |
+| `bridge` | subscribe to `samma-io.scan` and `samma-io.scan.>` | publish anything |
+
+Every scanner pod publishes on its own subject, `samma-io.scan.<scanner>`; the bridge listens to
+both the wildcard and the old plain subject, so scanners that still use `samma-io.scan` keep
+working.
+
+The passwords live in the Secret `samma-nats-auth` with the keys `scanner-password` and
+`bridge-password`. Scanner pods get `NATS_USER` and `NATS_PASSWORD` (from the Secret) and a
+`NATS_URL` of the form `nats://$(NATS_USER):$(NATS_PASSWORD)@nats:4222`, which the kubelet expands;
+the NATS client library reads the credentials from the URL, so no scanner image had to change. The
+bridge gets `NATS_USER` and `NATS_PASSWORD` too, and accepts a credentials file in `NATS_CREDS`
+instead when you point it at a NATS of your own. Passwords must be URL safe: the chart generates
+alphanumeric ones.
+
+Where the passwords come from, in order:
+
+1. `nats.existingSecret`: a Secret you manage, with the two keys above. The chart renders none.
+2. `nats.auth.scannerPassword` and `nats.auth.bridgePassword` set as values.
+3. The Secret already in the cluster, read back with Helm's `lookup`, so `helm upgrade` keeps
+   the passwords stable.
+4. Generated at install time.
+
+`helm template` and `helm install --dry-run` have no cluster to look in, so with 3 and 4 every
+render produces new passwords. That is a limitation of Helm's `lookup`, not drift: a GitOps tool
+that renders the chart itself (Argo CD, Flux's `helm template` mode) should use 1 or 2. The raw
+manifest ships the Secret with placeholder values that you must replace before applying.
+
+`nats.auth.enabled=false` restores the old unauthenticated NATS: no Secret, no credentials in any
+pod. The operator passes credentials to scanner pods only when `SAMMA_NATS_SECRET` names a Secret.
+
+---
+
+## Network policies
+
+The chart ships three NetworkPolicies (`networkPolicies.enabled`, default `true`; also in the raw
+manifest):
+
+| Policy | Selects | Allows |
+|---|---|---|
+| `samma-nats` | the NATS pod | ingress on 4222 and 8222 from pods in the release namespace only |
+| `samma-bridge` | the bridge | egress to NATS, TimescaleDB (while `bridge.storeInTimescaleDB` is on), DNS, and the Kubernetes API server |
+| `samma-scanners` | scan pods (`app.kubernetes.io/managed-by=samma-operator`, `samma.io/role=scanner`) | egress to DNS, NATS and public addresses only |
+
+"Public addresses only" means `0.0.0.0/0` except `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
+`100.64.0.0/10`, `169.254.0.0/16` and `127.0.0.0/8`, and `::/0` except `fc00::/7`, `fe80::/10`
+and `::1/128`. A scan pod therefore cannot be used to reach other pods, Services or nodes. When
+`config.allowPrivateTargets` is `"true"` (the same switch that lets a Scanner target a private
+address) the except lists are left out, and the scanners can reach the cluster network.
+
+The API server is not a pod, so the bridge's policy reaches it by port: 443 and 6443 to any
+address by default (`networkPolicies.apiServer.ports`). Set `networkPolicies.apiServer.cidrs` to
+restrict that to your control plane's addresses.
+
+A NetworkPolicy is only enforced by a CNI that implements it (Calico, Cilium, Antrea, kube-router,
+and most managed offerings do; Flannel on its own does not). Without such a CNI the objects are
+accepted and do nothing. Check with your cluster's documentation, or create a policy that denies
+everything in a test namespace and see whether it holds.
 
 ---
 
@@ -237,7 +551,7 @@ These map to the `SAMMA_IO_API_URL`, `SAMMA_IO_API_TOKEN` and `SAMMA_IO_PROFILE_
 
 ## Scanner profiles
 
-Profiles are stored in the `scanner-profiles` ConfigMap in the `samma-io` namespace. Pass `"profile": "<name>"` to `PUT /target` to select one.
+Profiles are stored in the `scanner-profiles` ConfigMap in the operator's namespace. Pass `"profile": "<name>"` to `PUT /target` to select one.
 
 | Profile | Scanners | Use when |
 |---|---|---|
@@ -479,34 +793,183 @@ curl -X DELETE http://localhost:8080/scanner \
 | `SAMMA_IO_PROFILE_ID` | — | Profile ID sent to external API |
 | `SAMMA_ALLOW_PRIVATE_TARGETS` | `false` | `true` lets a target resolve to a private, loopback, link-local, multicast or carrier-grade NAT address. See [Target validation](#target-validation). |
 | `SAMMA_ALLOW_UNMANAGED_TARGETS` | `true` | `false` refuses a Scanner whose target is not the host of an Ingress in the cluster. |
+| `SAMMA_NAMESPACE` | `samma-io` | The namespace Scanners, Jobs and CronJobs live in. The chart sets it from the pod's namespace. |
+| `SAMMA_SCANNER_SERVICE_ACCOUNT` | `samma-scanner` | ServiceAccount of scanner pods. |
+| `SAMMA_MAX_CONCURRENT_SCANS` | `2` | Scan Jobs allowed to run at the same time; `0` for no limit. See [Concurrency and scheduling](#concurrency-and-scheduling). |
+| `SAMMA_QUEUE_INTERVAL_SECONDS` | `15` | How often the queue checks for a free slot. |
+| `SAMMA_SCAN_DEADLINE_SECONDS` | `900` | `activeDeadlineSeconds` of every scan Job. |
+| `SAMMA_JOB_TTL_SECONDS` | `3600` | `ttlSecondsAfterFinished` of every scan Job. |
+| `SAMMA_NMAP_RAW_SOCKETS` | `false` | `true` adds `NET_RAW` to the nmap containers. See [Pod security](#pod-security). |
+| `SAMMA_SCANNER_RUN_AS_USER` | `1000` | uid of scanner containers. |
+| `SAMMA_SCANNER_IMAGE_PREFIX` | unset | Registry and organisation that replace the default of every scanner image. |
+| `SAMMA_SCANNER_IMAGE_TAG` | unset | Tag used together with the prefix (default: each image's own tag). |
+| `SAMMA_SCANNER_IMAGE_PULL_POLICY` | unset | `imagePullPolicy` of scanner containers. |
+| `SAMMA_SCANNER_IMAGE_<NAME>` | unset | Full image reference for one scanner, for example `SAMMA_SCANNER_IMAGE_HTTP_HEADERS_SCANNER`. |
+| `SAMMA_SCANNER_CPU_REQUEST`, `SAMMA_SCANNER_MEMORY_REQUEST`, `SAMMA_SCANNER_CPU_LIMIT`, `SAMMA_SCANNER_MEMORY_LIMIT` | `100m`, `128Mi`, `1`, `512Mi` | Resources of every scanner container. |
+| `SAMMA_NATS_SECRET` | unset | Secret with the key `scanner-password`; scanner pods get `NATS_USER`, `NATS_PASSWORD` and a `NATS_URL` with credentials from it. Unset: no credentials. See [NATS authentication](#nats-authentication). |
+| `SAMMA_NATS_SCANNER_USER` | `scanner` | The NATS user scanner pods log in as. |
 
 ### API
 
 Same env vars as operator, plus the external API vars above.
 
+### Bridge
+
+| Variable | Default | Description |
+|---|---|---|
+| `NATS_URL` | `nats://nats:4222` | NATS server URL |
+| `NATS_SUBJECT` | `samma-io.scan` | Base subject; the bridge subscribes to it and to `<base>.>` |
+| `NATS_USER`, `NATS_PASSWORD` | unset | NATS credentials (the `bridge` user) |
+| `NATS_CREDS` | unset | Path to a NATS credentials file; wins over user and password |
+| `DATABASE_URL` | unset | TimescaleDB connection string. Empty: no database, ScanReports only |
+| `SAMMA_NAMESPACE` | `samma-io` | Where Scanners are listed and ScanReports written |
+| `SCANREPORTS_ENABLED` | `true` | `false` stores rows only and never touches the Kubernetes API |
+| `METRICS_PORT` | `9100` | Prometheus metrics, `/healthz` and `/readyz` |
+| `SCANNER_CACHE_SECONDS` | `30` | How long the list of Scanners is cached |
+| `STRAGGLER_WAIT_SECONDS` | `30` | How long a run waits for findings still in flight after its run message |
+| `RUN_IDLE_TIMEOUT_SECONDS` | `3600` | A run without a run message is dropped after this long |
+
 ---
 
 ## Deploying the operator
 
+### Before you install
+
+The operator scans hosts. Once installed, it runs security scanners from inside the cluster
+against every host of an Ingress you annotate, and against any target a `Scanner` resource names.
+Only scan hosts you own or are allowed to test: scanning other people's hosts may break the law or
+your provider's terms of service. The chart will not render the operator until you say so with
+`acceptScanningTerms=true`.
+
 ### Prerequisites
 
-- Kubernetes cluster (1.21+)
+- Kubernetes 1.25 or newer
 - `kubectl` configured against the cluster
-- Helm 3 (for Helm install)
+- Helm 3.8 or newer (OCI registries) for the chart install
 
 ---
 
-### Option 1 — Raw manifest (quickest)
+### Option 1: Helm chart (recommended)
 
-Deploys everything into the `samma-io` namespace with default settings.
+The chart is published to `oci://ghcr.io/samma-io/charts/samma-operator`. Every release pins its
+own images: the chart's `appVersion` is the tag of the operator, API and bridge images, and
+`scanners.detectTag` is the tag of the detect scanner images.
 
 ```bash
-kubectl apply -f manifest/samma-operator.yaml
+helm install samma oci://ghcr.io/samma-io/charts/samma-operator --version 0.2.0 \
+  --set acceptScanningTerms=true \
+  --set timescaledb.password=<alphanumeric password>
 ```
 
-Verify:
+This installs the operator, the REST API, NATS, TimescaleDB (with a PVC) and the bridge into the
+namespace `samma-io`, which the chart creates. The two CRDs come from the chart's `crds/` directory
+and are installed first.
+
+**A values file** (recommended for anything you keep):
+
+```yaml
+# my-values.yaml
+acceptScanningTerms: true
+
+timescaledb:
+  password: <alphanumeric password>   # or existingSecret: <Secret with the key "password">
+  storage: 50Gi
+
+config:
+  sammaIoId: my-org-id
+  sammaIoTags: "['scanner','prod']"
+  apiToken: my-token          # optional samma.io connection
+  profileId: my-profile-id
+```
 
 ```bash
+helm install samma oci://ghcr.io/samma-io/charts/samma-operator --version 0.2.0 -f my-values.yaml
+```
+
+**Without the API and the database.** Targets can come from Ingress annotations and `Scanner`
+resources alone, and results live in `ScanReport` objects, so the API and TimescaleDB are optional:
+
+```bash
+helm install samma oci://ghcr.io/samma-io/charts/samma-operator --version 0.2.0 \
+  --set acceptScanningTerms=true \
+  --set api.enabled=false \
+  --set timescaledb.enabled=false
+```
+
+With `timescaledb.enabled=false` the bridge gets no `DATABASE_URL` and writes ScanReports only; no
+PVC and no password are needed.
+
+**Pin by digest.** Every image takes a `digest` (`operator.digest`, `api.digest`, `bridge.digest`,
+`nats.digest`, `timescaledb.digest`), rendered as `image@sha256:...`. The release notes list the
+digest of every image, and `scanners.images.<scanner>` pins one scanner image the same way.
+
+**Upgrade** (see [Upgrading](#upgrading) for the CRDs):
+
+```bash
+helm upgrade samma oci://ghcr.io/samma-io/charts/samma-operator --version <new version> -f my-values.yaml
+```
+
+**Uninstall:**
+
+```bash
+helm uninstall samma                # the pre-delete hook removes every Scanner first
+kubectl delete namespace samma-io   # removes all data
+kubectl delete crd scanner.samma.io scanreports.samma.io   # Helm leaves CRDs in place
+```
+
+**Key Helm values:**
+
+| Value | Default | Description |
+|---|---|---|
+| `acceptScanningTerms` | `false` | Must be `true`: you accept that the operator actively scans the hosts your Ingresses serve |
+| `namespace` | `samma-io` | Namespace to deploy into |
+| `createNamespace` | `true` | Create the Namespace as part of the release |
+| `operator.image`, `.tag`, `.digest`, `.pullPolicy` | `ghcr.io/samma-io/samma-operator`, `""` (the chart's `appVersion`), `""`, `IfNotPresent` | Operator image; a digest wins over the tag |
+| `api.enabled` | `true` | Deploy the REST API |
+| `api.image`, `.tag`, `.digest`, `.pullPolicy` | `ghcr.io/samma-io/samma-api`, `""`, `""`, `IfNotPresent` | API image |
+| `bridge.image`, `.tag`, `.digest`, `.pullPolicy` | `ghcr.io/samma-io/samma-bridge`, `""`, `""`, `IfNotPresent` | Bridge image |
+| `nats.image`, `.tag`, `.digest`, `.pullPolicy` | `nats`, `2`, `""`, `IfNotPresent` | NATS image |
+| `timescaledb.enabled` | `true` | Deploy TimescaleDB and its PVC |
+| `timescaledb.password`, `timescaledb.existingSecret` | `""`, `""` | One of the two is required when enabled: the password (stored in the Secret `samma-timescaledb`) or your own Secret with the key `password`. No default |
+| `timescaledb.image`, `.tag`, `.digest`, `.pullPolicy` | `timescale/timescaledb`, `latest-pg15`, `""`, `IfNotPresent` | TimescaleDB image |
+| `timescaledb.storage` | `10Gi` | PVC size for scan results |
+| `config.sammaIoId` | `""` | Default asset ID attached to all scans |
+| `config.sammaIoTags` | `['scanner']` | Default tags |
+| `config.apiToken` | `""` | External samma.io API token |
+| `config.natsUrl` | `nats://nats:4222` | NATS server URL |
+| `config.allowPrivateTargets`, `config.allowUnmanagedTargets` | `"false"`, `"true"` | See [Target validation](#target-validation) |
+| `nodeSelector` | `kubernetes.io/arch: amd64` | Node selector for all pods |
+| `serviceAccounts.operator` / `api` / `bridge` / `scanner` | `samma-operator`, `samma-api`, `samma-bridge`, `samma-scanner` | ServiceAccount names, see [RBAC](#rbac) |
+| `scanners.detectTag` | `2.0.0` | Tag of every detect scanner image, see [Scanner types](#scanner-types) |
+| `scanners.imagePrefix`, `scanners.imageTag`, `scanners.images` | `""`, `""`, `{}` | Mirror and per-scanner image references, see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs) |
+| `scanners.pullPolicy` | `IfNotPresent` | `imagePullPolicy` of scanner containers |
+| `scanners.resources` | 100m/128Mi requests, 1/512Mi limits | Resources of every scanner container |
+| `scanners.maxConcurrentScans` | `2` | Scan Jobs allowed to run at the same time |
+| `scanners.scanDeadlineSeconds` | `900` | `activeDeadlineSeconds` of scan Jobs |
+| `scanners.ttlSecondsAfterFinished` | `3600` | When finished Jobs are removed |
+| `scanners.nmapRawSockets` | `false` | Give nmap `NET_RAW` for SYN scans |
+| `scanners.runAsUser` | `1000` | uid of scanner containers |
+| `hooks.preDeleteCleanup` | `true` | Pre-delete hook that removes every Scanner on uninstall |
+| `nats.auth.enabled` | `true` | NATS users with publish-only and subscribe-only rights, see [NATS authentication](#nats-authentication) |
+| `nats.existingSecret` | `""` | Your own Secret with `scanner-password` and `bridge-password` |
+| `nats.auth.scannerPassword`, `nats.auth.bridgePassword` | `""` | Fixed passwords; empty means kept from the cluster or generated |
+| `bridge.scanReports` | `true` | Write ScanReport objects, see [Scan reports](#scan-reports) |
+| `bridge.storeInTimescaleDB` | `true` | Insert every message into TimescaleDB (needs `timescaledb.enabled`) |
+| `networkPolicies.enabled` | `true` | NetworkPolicies for NATS, the bridge and scan pods, see [Network policies](#network-policies) |
+| `networkPolicies.apiServer.ports`, `.cidrs` | `[443, 6443]`, `[]` | How the bridge may reach the API server |
+
+---
+
+### Option 2: Raw manifest
+
+Every release attaches `samma-operator-<version>.yaml`, the chart rendered with its defaults and
+the CRDs inline; `manifest/samma-operator.yaml` in the repository is the same deployment for the
+current version. Set the three `CHANGE-ME` passwords (NATS scanner and bridge, TimescaleDB) before
+applying. Applying the manifest is your acceptance of the scanning terms above: there is no
+`acceptScanningTerms` switch in plain YAML.
+
+```bash
+kubectl apply -f samma-operator-0.2.0.yaml
 kubectl get pods -n samma-io
 ```
 
@@ -521,74 +984,61 @@ curl http://localhost:8080/health
 
 ---
 
-### Option 2 — Helm chart
+## Upgrading
 
-The Helm chart is in `helm/samma-operator/` and exposes all images, credentials, and config as values.
+`helm upgrade` to a newer chart version rolls the operator, API, bridge and (if you did not pin
+them) the detect scanner images to the versions that release was tested with. Two things to know:
 
-**Install with defaults:**
-
-```bash
-helm install samma-operator helm/samma-operator/
-```
-
-**Install with custom values:**
+**CRDs.** The CRDs live in the chart's `crds/` directory. Helm installs them on `helm install` and
+never touches them again, so a release that changes a CRD needs one extra step after the upgrade:
 
 ```bash
-helm install samma-operator helm/samma-operator/ \
-  --set timescaledb.password=mysecretpassword \
-  --set config.sammaIoId=my-org-id \
-  --set config.apiToken=my-token
+helm pull oci://ghcr.io/samma-io/charts/samma-operator --version <version> --untar
+kubectl apply -f samma-operator/crds/
 ```
 
-**Or use a values file** (recommended for production):
+The release notes say when a CRD changed. Helm 3.17 and newer can also do it in one go with
+`helm upgrade --take-ownership`, as long as the CRDs are already in the cluster. The raw manifest
+carries the CRDs inline, so `kubectl apply -f samma-operator-<version>.yaml` updates them as part
+of the apply.
 
-```yaml
-# my-values.yaml
-namespace: samma-io
+**From 0.2.1 or earlier.** Those operators wrote kopf's `kopf.zalando.org/last-handled-configuration`
+annotation on every Ingress in the cluster; newer ones write it on opted-in Ingresses only and remove
+a leftover when that Ingress next changes (see [Lifecycle](#lifecycle) for the one-liner). The
+`filebeat` and `live` ConfigMaps are created only with `scanners.legacyBaseScanner: true` from now
+on; existing ones are left in place.
 
-timescaledb:
-  password: mysecretpassword
-  storage: 50Gi
+**From a chart before 0.2.0.** Those charts installed the CRDs as ordinary templates and used a
+default TimescaleDB password. Before upgrading, set `acceptScanningTerms: true` and
+`timescaledb.password: samma` (the old default, or your own) in your values, then run
+`kubectl apply -f samma-operator/crds/` once after the upgrade so the CRDs are the 0.2.0 ones. The
+CRD objects keep their data; only their definitions are rewritten.
 
-config:
-  sammaIoId: my-org-id
-  sammaIoTags: "['scanner','prod']"
-  apiUrl: https://www.samma.io
-  apiToken: my-token
-  profileId: my-profile-id
-```
+---
 
-```bash
-helm install samma-operator helm/samma-operator/ -f my-values.yaml
-```
+## Releases
 
-**Upgrade after changing values:**
+A release is a git tag `v<version>` on `main`, where `<version>` equals `version` and `appVersion`
+in `helm/samma-operator/Chart.yaml`. Pushing the tag, or creating a GitHub release for it, runs
+`.github/workflows/release.yaml`, which
 
-```bash
-helm upgrade samma-operator helm/samma-operator/ -f my-values.yaml
-```
+1. checks that the tag matches `Chart.yaml`, runs the unit tests and lints the chart;
+2. builds the operator, API and bridge images for `linux/amd64` and `linux/arm64` and pushes them
+   to `ghcr.io/samma-io/samma-operator`, `samma-api` and `samma-bridge`, tagged `<version>` and
+   `<version>-<short sha>`. A release never moves `latest`;
+3. packages the chart with that version and pushes it to `oci://ghcr.io/samma-io/charts`;
+4. creates the GitHub release with the chart archive, the rendered raw manifest and a table of
+   every image's digest.
 
-**Uninstall:**
+To release: set `version` and `appVersion` in `Chart.yaml`, add the entry to `CHANGELOG.md`, merge,
+then `git tag v<version> && git push origin v<version>`. New packages on GHCR are private until
+their visibility is set to public once in the organisation's package settings.
 
-```bash
-helm uninstall samma-operator
-kubectl delete namespace samma-io   # removes all data
-```
+The detect scanner images are released from [samma-io/detect](https://github.com/samma-io/detect)
+the same way; a new detect release is a one-line change of `scanners.detectTag` here.
 
-**Key Helm values:**
-
-| Value | Default | Description |
-|---|---|---|
-| `namespace` | `samma-io` | Namespace to deploy into |
-| `operator.image` / `operator.tag` | `mattiashem/samma-operator:latest` | Operator image |
-| `api.image` / `api.tag` | `sammascanner/api:latest` | API image |
-| `timescaledb.password` | `samma` | Database password — change in production |
-| `timescaledb.storage` | `10Gi` | PVC size for scan results |
-| `config.sammaIoId` | `""` | Default asset ID attached to all scans |
-| `config.sammaIoTags` | `['scanner']` | Default tags |
-| `config.apiToken` | `""` | External samma.io API token |
-| `config.natsUrl` | `nats://nats:4222` | NATS server URL |
-| `nodeSelector` | `kubernetes.io/arch: amd64` | Node selector for all pods |
+Every image and the chart can be pulled by digest, which is how downstream distributions mirror a
+release into their own registry without depending on GHCR at deploy time.
 
 ---
 
@@ -647,16 +1097,16 @@ To import a dashboard through the Grafana UI instead of using the script: **Dash
 
 ## Build & push images
 
-```bash
-# Operator
-docker build --platform linux/amd64 -t mattiashem/samma-operator:latest ./operator/
-docker push mattiashem/samma-operator:latest
-kubectl rollout restart deployment/samma-operator -n samma-io
+Images are built by GitHub Actions: `.github/workflows/build.yaml` on every push to `main`
+(`ghcr.io/samma-io/samma-{operator,api,bridge}` tagged `sha-<short sha>` and `latest`) and
+`.github/workflows/release.yaml` on every tag `v*` (see [Releases](#releases)). To try a build of
+your own on a development cluster:
 
-# API
-docker build --platform linux/amd64 -t sammascanner/api:latest ./api/
-docker push sammascanner/api:latest
-kubectl rollout restart deployment/samma-api -n samma-io
+```bash
+docker build -t ghcr.io/<you>/samma-operator:dev ./operator/
+docker push ghcr.io/<you>/samma-operator:dev
+helm upgrade samma oci://ghcr.io/samma-io/charts/samma-operator --version 0.2.0 --reuse-values \
+  --set operator.image=ghcr.io/<you>/samma-operator --set operator.tag=dev
 ```
 
 ## Build & Development

@@ -1,13 +1,42 @@
 apiVersion: v2
 name: samma-operator
-description: Kubernetes operator for automated security scanning
+description: Kubernetes operator that runs security scanners against the hosts your Ingresses serve
 type: application
-version: 0.1.0
-appVersion: "latest"
+# version and appVersion move together: a release is a tag v<version>, and
+# the release workflow refuses a tag that does not match this file.
+version: 0.2.2
+appVersion: "0.2.2"
+kubeVersion: ">=1.25.0"
 home: https://samma.io
 sources:
   - https://github.com/samma-io/operator
+  - https://github.com/samma-io/detect
+maintainers:
+  - name: Mattias Hemmingsson
+    url: https://github.com/mattiashem
 keywords:
   - security
   - scanning
   - operator
+annotations:
+  artifacthub.io/operator: "true"
+  artifacthub.io/crds: |
+    - kind: Scanner
+      version: v1
+      name: scanner.samma.io
+      displayName: Scanner
+      description: One target and the scanners to run against it.
+    - kind: ScanReport
+      version: v1alpha1
+      name: scanreports.samma.io
+      displayName: ScanReport
+      description: The findings of one scanner against one target.
+  artifacthub.io/changes: |
+    - kind: fixed
+      description: The operator handles only the Ingresses that carry samma-io.alpha.kubernetes.io/enable, and kopf's diff-base annotation (kopf.zalando.org/last-handled-configuration) is stored on those Ingresses only. 0.2.0 and 0.2.1 wrote it on every Ingress in the cluster; a leftover is removed the next time that Ingress changes.
+    - kind: fixed
+      description: http-headers-scanner Jobs get PORT=443 next to HTTPS=True, so the scanner judges the HTTPS endpoint instead of completing a TLS handshake on port 80 (detect 2.0.2 fixes the settings precedence on its side).
+    - kind: changed
+      description: The filebeat and live ConfigMaps of the legacy base scanner are created only with scanners.legacyBaseScanner set to true; nothing else uses them.
+    - kind: fixed
+      description: The bridge prints the release it belongs to (SAMMA_VERSION, set by the chart from appVersion). 0.2.1 still said 0.2.0.

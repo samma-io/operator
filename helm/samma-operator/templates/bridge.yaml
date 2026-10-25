@@ -1,3 +1,4 @@
+{{- include "samma.consentGate" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -12,21 +13,85 @@ spec:
       labels:
         app: samma-bridge
     spec:
-      serviceAccountName: samma-operator
+      serviceAccountName: {{ .Values.serviceAccounts.bridge }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.bridge.runAsUser }}
+        runAsGroup: {{ .Values.bridge.runAsGroup }}
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: samma-bridge
-          image: {{ .Values.bridge.image }}:{{ .Values.bridge.tag }}{{ if .Values.bridge.digest }}@{{ .Values.bridge.digest }}{{ end }}
+          image: {{ include "samma.image" (dict "spec" .Values.bridge "chart" .Chart) }}
           imagePullPolicy: {{ .Values.bridge.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: metrics
+              containerPort: 9100
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 30
           env:
+            - name: SAMMA_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # The release, for the startup banner.
+            - name: SAMMA_VERSION
+              value: {{ .Chart.AppVersion | quote }}
             - name: NATS_URL
               value: {{ .Values.config.natsUrl | quote }}
             - name: NATS_SUBJECT
               value: {{ .Values.config.natsSubject | quote }}
+            {{- if .Values.nats.auth.enabled }}
+            - name: NATS_USER
+              value: {{ .Values.nats.auth.bridgeUser | quote }}
+            - name: NATS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.nats.existingSecret | default "samma-nats-auth" }}
+                  key: bridge-password
+            {{- end }}
+            {{- if include "samma.storeInTimescaleDB" . }}
+            # The password stays in the Secret; the kubelet expands
+            # $(TIMESCALEDB_PASSWORD) into the URL.
+            - name: TIMESCALEDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "samma.timescaledbSecret" . }}
+                  key: password
             - name: DATABASE_URL
-              value: "postgresql://{{ .Values.timescaledb.user }}:{{ .Values.timescaledb.password }}@timescaledb:5432/{{ .Values.timescaledb.db }}"
+              value: "postgresql://{{ .Values.timescaledb.user }}:$(TIMESCALEDB_PASSWORD)@timescaledb:5432/{{ .Values.timescaledb.db }}"
+            {{- else }}
+            # No TimescaleDB: ScanReports only.
+            - name: DATABASE_URL
+              value: ""
+            {{- end }}
+            - name: SCANREPORTS_ENABLED
+              value: {{ .Values.bridge.scanReports | quote }}
+            - name: METRICS_PORT
+              value: "9100"
+            - name: SCANNER_CACHE_SECONDS
+              value: {{ .Values.bridge.scannerCacheSeconds | quote }}
+            - name: STRAGGLER_WAIT_SECONDS
+              value: {{ .Values.bridge.stragglerWaitSeconds | quote }}
           resources:
             {{- toYaml .Values.bridge.resources | nindent 12 }}

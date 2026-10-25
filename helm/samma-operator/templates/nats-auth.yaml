@@ -1,0 +1,74 @@
+{{- /*
+NATS authentication (README, "NATS authentication"). Two users: `scanner`
+may only publish on the scan subjects, `bridge` may only subscribe to them.
+Their passwords live in the Secret `samma-nats-auth` with the keys
+`scanner-password` and `bridge-password`, which is one of
+
+  1. a Secret you created, named in nats.existingSecret (nothing is
+     rendered for it here);
+  2. the values nats.auth.scannerPassword / bridgePassword;
+  3. the passwords already in the cluster, read back with `lookup` so a
+     `helm upgrade` keeps them;
+  4. generated at install time.
+
+`helm template` and `helm install --dry-run` have no cluster to look in,
+so with 3. and 4. every render produces new passwords; that is a Helm
+limitation of `lookup`, not drift. GitOps tools that render templates
+should use 1. or 2.
+*/ -}}
+{{- if .Values.nats.auth.enabled }}
+{{- if not .Values.nats.existingSecret }}
+{{- $scannerPassword := .Values.nats.auth.scannerPassword | default "" }}
+{{- $bridgePassword := .Values.nats.auth.bridgePassword | default "" }}
+{{- $existing := lookup "v1" "Secret" .Values.namespace "samma-nats-auth" }}
+{{- if and $existing $existing.data }}
+{{- if not $scannerPassword }}{{ $scannerPassword = index $existing.data "scanner-password" | default "" | b64dec }}{{ end }}
+{{- if not $bridgePassword }}{{ $bridgePassword = index $existing.data "bridge-password" | default "" | b64dec }}{{ end }}
+{{- end }}
+{{- if not $scannerPassword }}{{ $scannerPassword = randAlphaNum 32 }}{{ end }}
+{{- if not $bridgePassword }}{{ $bridgePassword = randAlphaNum 32 }}{{ end }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: samma-nats-auth
+  namespace: {{ .Values.namespace }}
+type: Opaque
+stringData:
+  scanner-password: {{ $scannerPassword | quote }}
+  bridge-password: {{ $bridgePassword | quote }}
+---
+{{- end }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nats-config
+  namespace: {{ .Values.namespace }}
+data:
+  nats-server.conf: |
+    listen: 0.0.0.0:4222
+    http: 0.0.0.0:8222
+    max_payload: 1MB
+    {{- if .Values.nats.auth.enabled }}
+    # Passwords come from the environment (Secret samma-nats-auth).
+    authorization {
+      users = [
+        {
+          user: {{ .Values.nats.auth.scannerUser | quote }}
+          password: $SAMMA_NATS_SCANNER_PASSWORD
+          permissions: {
+            publish: [{{ .Values.config.natsSubject | quote }}, {{ printf "%s.>" .Values.config.natsSubject | quote }}]
+            subscribe: { deny: ">" }
+          }
+        }
+        {
+          user: {{ .Values.nats.auth.bridgeUser | quote }}
+          password: $SAMMA_NATS_BRIDGE_PASSWORD
+          permissions: {
+            publish: { deny: ">" }
+            subscribe: [{{ .Values.config.natsSubject | quote }}, {{ printf "%s.>" .Values.config.natsSubject | quote }}]
+          }
+        }
+      ]
+    }
+    {{- end }}

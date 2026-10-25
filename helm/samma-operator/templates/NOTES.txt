@@ -1,0 +1,23 @@
+samma-operator {{ .Chart.Version }} is installed in namespace {{ .Values.namespace }}.
+
+The operator scans the hosts of every Ingress annotated with
+samma-io.alpha.kubernetes.io/enable: "true", and every target a Scanner
+resource names. You accepted that with acceptScanningTerms=true.
+
+Results:
+  kubectl -n {{ .Values.namespace }} get scanreports
+  kubectl -n {{ .Values.namespace }} get scanner
+{{- if .Values.api.enabled }}
+
+REST API (inside the cluster): http://api.{{ .Values.namespace }}.svc:8080
+{{- end }}
+{{- if .Values.timescaledb.enabled }}
+
+TimescaleDB: timescaledb.{{ .Values.namespace }}.svc:5432, database {{ .Values.timescaledb.db }},
+password in Secret {{ include "samma.timescaledbSecret" . }} (key "password").
+{{- end }}
+
+Upgrades: `helm upgrade` does not change CustomResourceDefinitions. After an
+upgrade that ships a CRD change, apply them from the chart:
+  helm pull oci://ghcr.io/samma-io/charts/samma-operator --version {{ .Chart.Version }} --untar
+  kubectl apply -f samma-operator/crds/

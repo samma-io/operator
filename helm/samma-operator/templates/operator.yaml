@@ -1,3 +1,4 @@
+{{- include "samma.consentGate" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -12,20 +13,34 @@ spec:
       labels:
         app: samma-operator
     spec:
-      serviceAccountName: samma-operator
+      serviceAccountName: {{ .Values.serviceAccounts.operator }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.operator.runAsUser }}
+        runAsGroup: {{ .Values.operator.runAsGroup }}
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: samma-operator
-          image: {{ .Values.operator.image }}:{{ .Values.operator.tag }}{{ if .Values.operator.digest }}@{{ .Values.operator.digest }}{{ end }}
+          image: {{ include "samma.image" (dict "spec" .Values.operator "chart" .Chart) }}
           imagePullPolicy: {{ .Values.operator.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
           env:
+            - name: SAMMA_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: SAMMA_IO_ID
               value: {{ .Values.config.sammaIoId | quote }}
             - name: SAMMA_IO_TAGS
@@ -50,6 +65,59 @@ spec:
               value: {{ .Values.config.allowPrivateTargets | quote }}
             - name: SAMMA_ALLOW_UNMANAGED_TARGETS
               value: {{ .Values.config.allowUnmanagedTargets | quote }}
+            # Scanner Jobs and CronJobs (values.scanners)
+            - name: SAMMA_SCANNER_SERVICE_ACCOUNT
+              value: {{ .Values.serviceAccounts.scanner | quote }}
+            - name: SAMMA_MAX_CONCURRENT_SCANS
+              value: {{ .Values.scanners.maxConcurrentScans | quote }}
+            - name: SAMMA_SCAN_DEADLINE_SECONDS
+              value: {{ .Values.scanners.scanDeadlineSeconds | quote }}
+            - name: SAMMA_JOB_TTL_SECONDS
+              value: {{ .Values.scanners.ttlSecondsAfterFinished | quote }}
+            - name: SAMMA_NMAP_RAW_SOCKETS
+              value: {{ .Values.scanners.nmapRawSockets | quote }}
+            - name: SAMMA_LEGACY_BASE_SCANNER
+              value: {{ .Values.scanners.legacyBaseScanner | quote }}
+            - name: SAMMA_SCANNER_RUN_AS_USER
+              value: {{ .Values.scanners.runAsUser | quote }}
+            - name: SAMMA_SCANNER_IMAGE_PREFIX
+              value: {{ .Values.scanners.imagePrefix | quote }}
+            - name: SAMMA_SCANNER_IMAGE_TAG
+              value: {{ .Values.scanners.imageTag | quote }}
+            - name: SAMMA_SCANNER_IMAGE_PULL_POLICY
+              value: {{ .Values.scanners.pullPolicy | quote }}
+            {{- /*
+            The detect scanners are pinned to scanners.detectTag (README,
+            "Scanner types"): every detect scanner without an entry in
+            scanners.images gets a full reference here. imagePrefix and
+            imageTag still apply, so a mirror works the same way for them.
+            */}}
+            {{- $registry := .Values.scanners.imagePrefix | default "ghcr.io/samma-io" | trimSuffix "/" }}
+            {{- $detectTag := .Values.scanners.imageTag | default .Values.scanners.detectTag }}
+            {{- range $name := .Values.scanners.detectScanners }}
+            {{- if not (hasKey $.Values.scanners.images $name) }}
+            - name: SAMMA_SCANNER_IMAGE_{{ $name | upper | replace "-" "_" }}
+              value: {{ printf "%s/detect-%s:%s" $registry $name $detectTag | quote }}
+            {{- end }}
+            {{- end }}
+            {{- range $name, $image := .Values.scanners.images }}
+            - name: SAMMA_SCANNER_IMAGE_{{ $name | upper | replace "-" "_" }}
+              value: {{ $image | quote }}
+            {{- end }}
+            - name: SAMMA_SCANNER_CPU_REQUEST
+              value: {{ .Values.scanners.resources.requests.cpu | quote }}
+            - name: SAMMA_SCANNER_MEMORY_REQUEST
+              value: {{ .Values.scanners.resources.requests.memory | quote }}
+            - name: SAMMA_SCANNER_CPU_LIMIT
+              value: {{ .Values.scanners.resources.limits.cpu | quote }}
+            - name: SAMMA_SCANNER_MEMORY_LIMIT
+              value: {{ .Values.scanners.resources.limits.memory | quote }}
+            # NATS credentials for scanner pods (README, "NATS authentication").
+            # Empty means scanner pods connect without credentials.
+            - name: SAMMA_NATS_SECRET
+              value: {{ if .Values.nats.auth.enabled }}{{ .Values.nats.existingSecret | default "samma-nats-auth" | quote }}{{ else }}""{{ end }}
+            - name: SAMMA_NATS_SCANNER_USER
+              value: {{ .Values.nats.auth.scannerUser | quote }}
           resources:
             {{- toYaml .Values.operator.resources | nindent 12 }}
 ---

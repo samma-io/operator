@@ -1,3 +1,11 @@
+# samma-operator 0.2.2, the same deployment as the Helm chart with its
+# defaults (helm/samma-operator), CRDs included. Releases attach a rendered
+# copy of this file.
+#
+# Set the three CHANGE-ME passwords before applying (NATS scanner and
+# bridge, TimescaleDB). Applying this manifest deploys an operator that
+# actively scans the hosts this cluster's Ingresses serve, and any target a
+# Scanner resource names. Only scan hosts you are allowed to scan.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -69,11 +77,229 @@ spec:
     shortNames:
       - sc
 ---
+# ScanReport: written by the bridge and the operator (README, "Scan reports").
+# Keep in sync with helm/samma-operator/templates/crd-scanreport.yaml.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: scanreports.samma.io
+spec:
+  scope: Namespaced
+  group: samma.io
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Target
+          type: string
+          jsonPath: .spec.target
+        - name: Scanner
+          type: string
+          jsonPath: .spec.scanner
+        - name: Outcome
+          type: string
+          jsonPath: .status.lastRun.outcome
+        - name: High
+          type: integer
+          jsonPath: .status.summary.high
+        - name: LastSuccess
+          type: date
+          jsonPath: .status.lastSuccessAt
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - target
+                - scanner
+              properties:
+                target:
+                  # The same expression as Scanner.spec.target.
+                  type: string
+                  maxLength: 253
+                  pattern: '^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])|[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{0,4}){2,7})$'
+                scanner:
+                  type: string
+                  maxLength: 63
+                  pattern: '^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$'
+                template:
+                  # The scanner variant (nmap has port, http and tls); absent
+                  # when the scanner has one.
+                  type: string
+                  maxLength: 63
+                  pattern: '^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$'
+                tier:
+                  type: string
+                  maxLength: 32
+                  pattern: '^[a-z0-9-]{1,32}$'
+            status:
+              type: object
+              properties:
+                scannerVersion:
+                  type: string
+                  maxLength: 64
+                lastRun:
+                  # The most recent run, whatever its outcome. Findings and
+                  # summary are replaced only when outcome is succeeded; a
+                  # failed or timed_out run leaves them as they were.
+                  type: object
+                  required:
+                    - runId
+                    - outcome
+                    - finishedAt
+                  properties:
+                    runId:
+                      # The scanner pod's name (its hostname).
+                      type: string
+                      maxLength: 253
+                    jobName:
+                      type: string
+                      maxLength: 253
+                    startedAt:
+                      type: string
+                      format: date-time
+                    finishedAt:
+                      type: string
+                      format: date-time
+                    outcome:
+                      type: string
+                      enum:
+                        - succeeded
+                        - failed
+                        - timed_out
+                    message:
+                      type: string
+                      maxLength: 512
+                lastSuccessAt:
+                  type: string
+                  format: date-time
+                summary:
+                  type: object
+                  properties:
+                    critical:
+                      type: integer
+                      minimum: 0
+                    high:
+                      type: integer
+                      minimum: 0
+                    medium:
+                      type: integer
+                      minimum: 0
+                    low:
+                      type: integer
+                      minimum: 0
+                    info:
+                      type: integer
+                      minimum: 0
+                findings:
+                  # Capped by the bridge: 200 entries, 256 KiB serialised,
+                  # evidence summaries only (never a response body).
+                  type: array
+                  maxItems: 200
+                  items:
+                    type: object
+                    required:
+                      - checkId
+                      - severity
+                      - title
+                      - endpoint
+                    properties:
+                      checkId:
+                        # Stable per scanner, never renamed; a renamed check
+                        # is a new check. For example SAMMA-TLS-PROTOCOL-DEPRECATED.
+                        type: string
+                        pattern: '^[A-Z0-9-]{3,80}$'
+                      severity:
+                        type: string
+                        enum:
+                          - CRITICAL
+                          - HIGH
+                          - MEDIUM
+                          - LOW
+                          - INFO
+                      title:
+                        type: string
+                        maxLength: 200
+                      endpoint:
+                        type: object
+                        required:
+                          - host
+                        properties:
+                          host:
+                            type: string
+                            maxLength: 253
+                          port:
+                            type: integer
+                            minimum: 1
+                            maximum: 65535
+                          scheme:
+                            type: string
+                            maxLength: 16
+                      evidence:
+                        type: string
+                        maxLength: 1024
+                      remediation:
+                        type: string
+                        maxLength: 1024
+                      references:
+                        type: array
+                        maxItems: 10
+                        items:
+                          type: string
+                          maxLength: 512
+                      cveIds:
+                        type: array
+                        maxItems: 50
+                        items:
+                          type: string
+                          pattern: '^CVE-\d{4}-\d{4,}$'
+                      compliance:
+                        type: array
+                        maxItems: 20
+                        items:
+                          type: string
+                          maxLength: 64
+  names:
+    kind: ScanReport
+    plural: scanreports
+    singular: scanreport
+    shortNames:
+      - sr
+---
+# Least-privilege RBAC. Keep in sync with helm/samma-operator/templates/rbac.yaml.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: samma-operator
   namespace: samma-io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: samma-operator
+rules:
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["samma.io"]
+    resources: ["scanner", "scanner/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["samma.io"]
+    resources: ["scanreports", "scanreports/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["", "events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -82,11 +308,118 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: cluster-admin
+  name: samma-operator
 subjects:
   - kind: ServiceAccount
     name: samma-operator
     namespace: samma-io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: samma-operator
+  namespace: samma-io
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: samma-operator
+  namespace: samma-io
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: samma-operator
+subjects:
+  - kind: ServiceAccount
+    name: samma-operator
+    namespace: samma-io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: samma-api
+  namespace: samma-io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: samma-api
+  namespace: samma-io
+rules:
+  - apiGroups: ["samma.io"]
+    resources: ["scanner"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: samma-api
+  namespace: samma-io
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: samma-api
+subjects:
+  - kind: ServiceAccount
+    name: samma-api
+    namespace: samma-io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: samma-bridge
+  namespace: samma-io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: samma-bridge
+  namespace: samma-io
+rules:
+  - apiGroups: ["samma.io"]
+    resources: ["scanreports", "scanreports/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["samma.io"]
+    resources: ["scanner"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: samma-bridge
+  namespace: samma-io
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: samma-bridge
+subjects:
+  - kind: ServiceAccount
+    name: samma-bridge
+    namespace: samma-io
+---
+# Scanner pods: no rules bound, no token mounted.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: samma-scanner
+  namespace: samma-io
+automountServiceAccountToken: false
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -105,15 +438,27 @@ spec:
       serviceAccountName: samma-operator
       nodeSelector:
         kubernetes.io/arch: amd64
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: samma-operator
-          image: mattiashem/samma-operator:latest@sha256:a1c718acbef760fb660a8bfec72a722261111e112ccfd57f5475344eca315613
-          imagePullPolicy: Always
+          image: ghcr.io/samma-io/samma-operator:0.2.2
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
           env:
+            - name: SAMMA_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: SAMMA_IO_ID
               value: ""
             - name: SAMMA_IO_TAGS
@@ -138,6 +483,58 @@ spec:
               value: "false"
             - name: SAMMA_ALLOW_UNMANAGED_TARGETS
               value: "true"
+            # Scanner Jobs and CronJobs (README, "Scan Jobs and CronJobs")
+            - name: SAMMA_SCANNER_SERVICE_ACCOUNT
+              value: "samma-scanner"
+            - name: SAMMA_MAX_CONCURRENT_SCANS
+              value: "2"
+            - name: SAMMA_SCAN_DEADLINE_SECONDS
+              value: "900"
+            - name: SAMMA_JOB_TTL_SECONDS
+              value: "3600"
+            - name: SAMMA_NMAP_RAW_SOCKETS
+              value: "false"
+            - name: SAMMA_LEGACY_BASE_SCANNER
+              value: "false"
+            - name: SAMMA_SCANNER_RUN_AS_USER
+              value: "1000"
+            - name: SAMMA_SCANNER_IMAGE_PREFIX
+              value: ""
+            - name: SAMMA_SCANNER_IMAGE_TAG
+              value: ""
+            - name: SAMMA_SCANNER_IMAGE_PULL_POLICY
+              value: "IfNotPresent"
+            # The detect scanners, pinned to the detect release this operator
+            # was tested with (the chart's scanners.detectTag).
+            - name: SAMMA_SCANNER_IMAGE_DNS_SCANNER
+              value: "ghcr.io/samma-io/detect-dns-scanner:2.0.0"
+            - name: SAMMA_SCANNER_IMAGE_HTTP_HEADERS_SCANNER
+              value: "ghcr.io/samma-io/detect-http-headers-scanner:2.0.0"
+            - name: SAMMA_SCANNER_IMAGE_HTTP_REDIRECT_SCANNER
+              value: "ghcr.io/samma-io/detect-http-redirect-scanner:2.0.0"
+            - name: SAMMA_SCANNER_IMAGE_PORT_SCANNER
+              value: "ghcr.io/samma-io/detect-port-scanner:2.0.0"
+            - name: SAMMA_SCANNER_IMAGE_SSH_BANNER_SCANNER
+              value: "ghcr.io/samma-io/detect-ssh-banner-scanner:2.0.0"
+            - name: SAMMA_SCANNER_IMAGE_TLS_SCANNER
+              value: "ghcr.io/samma-io/detect-tls-scanner:2.0.0"
+            - name: SAMMA_SCANNER_IMAGE_TRACEROUTE_SCANNER
+              value: "ghcr.io/samma-io/detect-traceroute-scanner:2.0.0"
+            - name: SAMMA_SCANNER_IMAGE_WHOIS_SCANNER
+              value: "ghcr.io/samma-io/detect-whois-scanner:2.0.0"
+            - name: SAMMA_SCANNER_CPU_REQUEST
+              value: "100m"
+            - name: SAMMA_SCANNER_MEMORY_REQUEST
+              value: "128Mi"
+            - name: SAMMA_SCANNER_CPU_LIMIT
+              value: "1"
+            - name: SAMMA_SCANNER_MEMORY_LIMIT
+              value: "512Mi"
+            # NATS credentials for scanner pods (README, "NATS authentication").
+            - name: SAMMA_NATS_SECRET
+              value: "samma-nats-auth"
+            - name: SAMMA_NATS_SCANNER_USER
+              value: "scanner"
           resources:
             requests:
               cpu: 100m
@@ -174,18 +571,22 @@ spec:
       labels:
         app: samma-api
     spec:
-      serviceAccountName: samma-operator
+      serviceAccountName: samma-api
       nodeSelector:
         kubernetes.io/arch: amd64
       containers:
         - name: samma-api
-          image: sammascanner/api:latest@sha256:0cb8f1b94292ea30d850c82db0f3dda02999595841d871431f77d3cb90185dfb
-          imagePullPolicy: Always
+          image: ghcr.io/samma-io/samma-api:0.2.2
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
           env:
+            - name: SAMMA_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: SAMMA_IO_ID
               value: ""
             - name: SAMMA_IO_TAGS
@@ -222,6 +623,53 @@ spec:
       targetPort: 8080
   type: ClusterIP
 ---
+# NATS authentication (README, "NATS authentication"): scanner pods log in
+# as "scanner" and may only publish on the scan subjects, the bridge logs in
+# as "bridge" and may only subscribe to them. SET BOTH PASSWORDS BEFORE
+# APPLYING: alphanumeric (they travel in the scanner pods' NATS URL), for
+# example `openssl rand -hex 24`. The values below are placeholders.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: samma-nats-auth
+  namespace: samma-io
+type: Opaque
+stringData:
+  scanner-password: "CHANGE-ME-scanner-password"
+  bridge-password: "CHANGE-ME-bridge-password"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nats-config
+  namespace: samma-io
+data:
+  nats-server.conf: |
+    listen: 0.0.0.0:4222
+    http: 0.0.0.0:8222
+    max_payload: 1MB
+    # Passwords come from the environment (Secret samma-nats-auth).
+    authorization {
+      users = [
+        {
+          user: "scanner"
+          password: $SAMMA_NATS_SCANNER_PASSWORD
+          permissions: {
+            publish: ["samma-io.scan", "samma-io.scan.>"]
+            subscribe: { deny: ">" }
+          }
+        }
+        {
+          user: "bridge"
+          password: $SAMMA_NATS_BRIDGE_PASSWORD
+          permissions: {
+            publish: { deny: ">" }
+            subscribe: ["samma-io.scan", "samma-io.scan.>"]
+          }
+        }
+      ]
+    }
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -241,9 +689,26 @@ spec:
       containers:
         - name: nats
           image: nats:2@sha256:023a08c46caa5aff878fb86841187bebfdad9a6e3c552ba5c1a1e18938bbf88a
+          imagePullPolicy: IfNotPresent
+          args: ["--config", "/etc/nats/nats-server.conf"]
           ports:
             - containerPort: 4222
             - containerPort: 8222
+          env:
+            - name: SAMMA_NATS_SCANNER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: samma-nats-auth
+                  key: scanner-password
+            - name: SAMMA_NATS_BRIDGE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: samma-nats-auth
+                  key: bridge-password
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nats
+              readOnly: true
           resources:
             requests:
               cpu: 50m
@@ -251,6 +716,10 @@ spec:
             limits:
               cpu: 100m
               memory: 128Mi
+      volumes:
+        - name: config
+          configMap:
+            name: nats-config
 ---
 apiVersion: v1
 kind: Service
@@ -268,6 +737,17 @@ spec:
       port: 8222
       targetPort: 8222
   type: ClusterIP
+---
+# TimescaleDB password: SET IT BEFORE APPLYING (alphanumeric; it travels in
+# the bridge's DATABASE_URL). The value below is a placeholder.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: samma-timescaledb
+  namespace: samma-io
+type: Opaque
+stringData:
+  password: "CHANGE-ME-timescaledb-password"
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -299,13 +779,17 @@ spec:
       containers:
         - name: timescaledb
           image: timescale/timescaledb:latest-pg15@sha256:6343bdc87ca132c6b53acb26113a6bad1821d188fa39975a745f32ddd9757634
+          imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_DB
               value: samma
             - name: POSTGRES_USER
               value: samma
             - name: POSTGRES_PASSWORD
-              value: samma
+              valueFrom:
+                secretKeyRef:
+                  name: samma-timescaledb
+                  key: password
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
           ports:
@@ -352,20 +836,71 @@ spec:
       labels:
         app: samma-bridge
     spec:
-      serviceAccountName: samma-operator
+      serviceAccountName: samma-bridge
       nodeSelector:
         kubernetes.io/arch: amd64
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: samma-bridge
-          image: sammascanner/bridge:latest@sha256:043ae17d18926b5d0b57058a6b10d845f73723a6bb17eb65031162501eda42c3
-          imagePullPolicy: Always
+          image: ghcr.io/samma-io/samma-bridge:0.2.2
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: metrics
+              containerPort: 9100
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 30
           env:
+            - name: SAMMA_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # The release, for the startup banner: keep it equal to the
+            # bridge image tag above.
+            - name: SAMMA_VERSION
+              value: "0.2.2"
             - name: NATS_URL
               value: nats://nats:4222
             - name: NATS_SUBJECT
               value: samma-io.scan
+            - name: NATS_USER
+              value: bridge
+            - name: NATS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: samma-nats-auth
+                  key: bridge-password
+            # The password stays in the Secret; the kubelet expands
+            # $(TIMESCALEDB_PASSWORD) into the URL.
+            - name: TIMESCALEDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: samma-timescaledb
+                  key: password
             - name: DATABASE_URL
-              value: postgresql://samma:samma@timescaledb:5432/samma
+              value: "postgresql://samma:$(TIMESCALEDB_PASSWORD)@timescaledb:5432/samma"
+            - name: SCANREPORTS_ENABLED
+              value: "true"
+            - name: METRICS_PORT
+              value: "9100"
           resources:
             requests:
               cpu: 50m
@@ -373,3 +908,113 @@ spec:
             limits:
               cpu: 200m
               memory: 256Mi
+---
+# Network policies (README, "Network policies"). Enforced only by a CNI that
+# implements NetworkPolicy. Keep in sync with
+# helm/samma-operator/templates/networkpolicies.yaml.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: samma-nats
+  namespace: samma-io
+spec:
+  podSelector:
+    matchLabels:
+      app: nats
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 4222
+          protocol: TCP
+        - port: 8222
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: samma-bridge
+  namespace: samma-io
+spec:
+  podSelector:
+    matchLabels:
+      app: samma-bridge
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: nats
+      ports:
+        - port: 4222
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: timescaledb
+      ports:
+        - port: 5432
+          protocol: TCP
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # The Kubernetes API server, which is not a pod: by port, to any address.
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+---
+# Scan pods: DNS, NATS and public addresses only. Remove the except lists
+# when SAMMA_ALLOW_PRIVATE_TARGETS is "true".
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: samma-scanners
+  namespace: samma-io
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/managed-by: samma-operator
+      samma.io/role: scanner
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: nats
+      ports:
+        - port: 4222
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+              - 127.0.0.0/8
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - fc00::/7
+              - fe80::/10
+              - ::1/128
+# Uninstall: the Helm chart runs operator/code/uninstall_cleanup.py from a
+# pre-delete hook. With the raw manifest, delete every Scanner first:
+#   kubectl -n samma-io delete scanner --all
+# Their Jobs, CronJobs and ScanReports follow through garbage collection; then
+#   kubectl delete -f manifest/samma-operator.yaml
