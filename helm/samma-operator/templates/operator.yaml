@@ -104,6 +104,16 @@ spec:
               value: {{ printf "%s/detect-%s:%s" $registry $name $detectTag | quote }}
             {{- end }}
             {{- end }}
+            {{- /*
+            nmap and nikto are pinned the same way, each to its own tag in
+            scanners.classicTags.
+            */}}
+            {{- range $name, $tag := .Values.scanners.classicTags }}
+            {{- if not (hasKey $.Values.scanners.images $name) }}
+            - name: SAMMA_SCANNER_IMAGE_{{ $name | upper | replace "-" "_" }}
+              value: {{ printf "%s/%s:%s" $registry $name ($.Values.scanners.imageTag | default $tag) | quote }}
+            {{- end }}
+            {{- end }}
             {{- range $name, $image := .Values.scanners.images }}
             - name: SAMMA_SCANNER_IMAGE_{{ $name | upper | replace "-" "_" }}
               value: {{ $image | quote }}

@@ -67,8 +67,7 @@ scanners:
   # This is the detect release the operator was tested with.
   detectTag: "2.0.2"
   # The scanners detectTag applies to (the operator's own table has the same
-  # names). The classic images (nmap, nikto, tsunami) keep the defaults in
-  # operator/code/jobspec.py until they are rebuilt.
+  # names).
   detectScanners:
     - dns-scanner
     - http-headers-scanner
@@ -78,10 +77,17 @@ scanners:
     - tls-scanner
     - traceroute-scanner
     - whois-scanner
+  # The rebuilt classic images (github.com/samma-io/nmap and samma-io/nikto),
+  # each released on its own: ghcr.io/samma-io/<name>:<tag>. These are the
+  # builds the operator was tested with. tsunami and base keep the defaults
+  # in operator/code/jobspec.py.
+  classicTags:
+    nikto: sha-bb12955
+    nmap: sha-c767f51
   # imagePrefix replaces the registry and organisation of every scanner
   # image, keeping the image's base name (a mirror of the detect images
-  # becomes <imagePrefix>/detect-dns-scanner:<imageTag, else detectTag>; a
-  # classic image becomes <imagePrefix>/nmap:<imageTag, else its default tag>).
+  # becomes <imagePrefix>/detect-dns-scanner:<imageTag, else detectTag>;
+  # nmap becomes <imagePrefix>/nmap:<imageTag, else classicTags.nmap>).
   imagePrefix: ""
   imageTag: ""
   # imagePullPolicy for scanner containers; empty keeps the Kubernetes default.
@@ -89,7 +95,7 @@ scanners:
   # A full reference for one scanner, with a tag or a digest. Wins over
   # everything above for that scanner.
   images: {}
-  #  nmap: ghcr.io/samma-io/nmap:v0.3
+  #  nmap: ghcr.io/samma-io/nmap@sha256:0123abcd...
   #  dns-scanner: ghcr.io/samma-io/detect-dns-scanner@sha256:0123abcd...
   # The legacy base scanner ships its files with a filebeat sidecar that
   # mounts the filebeat and live ConfigMaps. true creates them at startup;
@@ -114,7 +120,8 @@ scanners:
   ttlSecondsAfterFinished: 3600
   # true adds the NET_RAW capability to the nmap containers (SYN scans).
   # false keeps every scanner at drop ALL and asks nmap for connect scans
-  # through NMAP_UNPRIVILEGED; the nmap image has to honour that.
+  # through NMAP_UNPRIVILEGED, which the ghcr.io/samma-io/nmap image honours.
+  # true does not work with that image yet (samma-io/nmap#6).
   nmapRawSockets: false
   # The uid scanner containers run as. The samma images create their user
   # with useradd, which gives uid 1000.

@@ -263,11 +263,36 @@ class ImageTests(unittest.TestCase):
     def test_default_override_and_prefix(self):
         nmap = jobspec.SCANNERS["nmap"]
         dns = jobspec.SCANNERS["dns-scanner"]
-        self.assertEqual(jobspec.image_for(nmap, settings()), "sammascanner/nmap:v0.2")
+        self.assertEqual(jobspec.image_for(nmap, settings()), "ghcr.io/samma-io/nmap:sha-c767f51")
+        self.assertEqual(jobspec.image_for(jobspec.SCANNERS["nikto"], settings()), "ghcr.io/samma-io/nikto:sha-bb12955")
         self.assertEqual(jobspec.image_for(nmap, settings(image_overrides={"nmap": "r.example/nmap:v9"})), "r.example/nmap:v9")
-        self.assertEqual(jobspec.image_for(nmap, settings(image_prefix="ghcr.io/samma-io/")), "ghcr.io/samma-io/nmap:v0.2")
+        self.assertEqual(jobspec.image_for(nmap, settings(image_prefix="r.example/mirror/")), "r.example/mirror/nmap:sha-c767f51")
+        self.assertEqual(jobspec.image_for(nmap, settings(image_prefix="r.example", image_tag="t1")), "r.example/nmap:t1")
         self.assertEqual(jobspec.image_for(dns, settings(image_prefix="ghcr.io/mirror", image_tag="2026.10")), "ghcr.io/mirror/detect-dns-scanner:2026.10")
         self.assertEqual(jobspec.image_for(jobspec.SCANNERS["base"], settings(image_prefix="r.example")), "r.example/base:latest")
+
+    def test_tsunami_and_base_keep_their_images(self):
+        self.assertEqual(jobspec.SCANNERS["tsunami"].image, "sammascanner/tsunami:v0.1")
+        self.assertEqual(jobspec.SCANNERS["base"].image, "sammascanner/base:latest")
+
+    def test_classic_pins_match_chart_and_manifest(self):
+        # The chart (scanners.classicTags) and the raw manifest
+        # (SAMMA_SCANNER_IMAGE_<NAME>) pin the same builds as the table.
+        with open(os.path.join(REPO_DIR, "helm", "samma-operator", "values.yaml")) as f:
+            values = f.read()
+        with open(os.path.join(REPO_DIR, "manifest", "samma-operator.yaml")) as f:
+            manifest = f.read()
+        block = re.search(r"^  classicTags:\n((?:    .*\n)+)", values, re.M)
+        self.assertIsNotNone(block, "scanners.classicTags missing from values.yaml")
+        tags = dict(re.findall(r"^    ([a-z0-9-]+): (\S+)$", block.group(1), re.M))
+        self.assertEqual(tags, jobspec.CLASSIC_TAGS)
+        for name, tag in jobspec.CLASSIC_TAGS.items():
+            with self.subTest(scanner=name):
+                self.assertEqual(jobspec.SCANNERS[name].image, "ghcr.io/samma-io/{0}:{1}".format(name, tag))
+                env = "SAMMA_SCANNER_IMAGE_{0}".format(name.upper().replace("-", "_"))
+                match = re.search(r"- name: {0}\n\s+value: \"([^\"]+)\"".format(env), manifest)
+                self.assertIsNotNone(match, env + " missing from the manifest")
+                self.assertEqual(match.group(1), jobspec.SCANNERS[name].image)
 
     def test_override_wins_over_prefix(self):
         nmap = jobspec.SCANNERS["nmap"]
@@ -398,7 +423,8 @@ class ClassicScannerTests(unittest.TestCase):
                 self.assertNotIn("NMAP_PRIVILEGED", env_dict(container))
                 self.assertEqual(env_dict(container)["SAMMA_IO_SCANNER"], "nmap")
                 self.assertEqual(job["metadata"]["name"], "nmap-{0}-{1}".format(variant.name, jobspec.target_hash("www.example.com")))
-                # sudo in the image: privilege escalation stays allowed for now.
+                # Kept only for raw-sockets mode (samma-io/nmap#6); the
+                # default mode needs no sudo with the ghcr.io image.
                 self.assertIs(container["securityContext"]["allowPrivilegeEscalation"], True)
 
     def test_nmap_raw_sockets_toggle(self):
@@ -438,8 +464,15 @@ class ClassicScannerTests(unittest.TestCase):
         spec, variant = run("nikto")
         container = container_of(jobspec.build_job(spec, variant, "www.example.com", {"SAMMA_IO_TAGS": "['a']", "NATS_URL": "x"}, settings()))
         self.assertEqual(container["name"], "nikto")
-        self.assertEqual(container["image"], "sammascanner/nikto:v0.2")
+        self.assertEqual(container["image"], "ghcr.io/samma-io/nikto:sha-bb12955")
         self.assertEqual([e["name"] for e in container["env"]], ["TARGET", "SAMMA_IO_SCANNER", "SAMMA_IO_TAGS", "NATS_URL"])
+
+    def test_nikto_runs_without_privilege_escalation(self):
+        spec, variant = run("nikto")
+        self.assertIs(spec.sudo, False)
+        container = container_of(jobspec.build_job(spec, variant, "www.example.com", ENV, settings(nmap_raw_sockets=True)))
+        self.assertIs(container["securityContext"]["allowPrivilegeEscalation"], False)
+        self.assertEqual(container["securityContext"]["capabilities"], {"drop": ["ALL"]})
 
 
 class BuildCronJobTests(unittest.TestCase):

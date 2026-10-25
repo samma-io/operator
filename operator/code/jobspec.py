@@ -266,9 +266,9 @@ class ScannerSpec(object):
         # args(target) -> list, for scanners that take the target as an
         # argument rather than from the TARGET environment variable.
         self.args = args
-        # The classic images run the tool through sudo (a sudoers line in the
-        # image). sudo needs allowPrivilegeEscalation, so those containers
-        # keep it until the images run the tool directly.
+        # True keeps allowPrivilegeEscalation for an image that runs its tool
+        # through sudo. Only nmap still has it, for raw-sockets mode (see the
+        # nmap entry below); every other scanner runs without.
         self.sudo = sudo
         # True when the scanner can use raw sockets (nmap SYN scans). The
         # capability is only granted when Settings.nmap_raw_sockets is set.
@@ -358,10 +358,22 @@ for _name in DETECT_SCANNERS:
         reports=True,
     )
 
-SCANNERS["nikto"] = ScannerSpec("nikto", "sammascanner/nikto:v0.2", sudo=True)
+# The rebuilt classic images (samma-io/nmap, samma-io/nikto): no shell, no
+# sudo, uid 1000 "samma". The chart and the raw manifest pin the same tags
+# through SAMMA_SCANNER_IMAGE_<NAME> (scanners.classicTags).
+CLASSIC_TAGS = {
+    "nikto": "sha-bb12955",
+    "nmap": "sha-c767f51",
+}
+
+SCANNERS["nikto"] = ScannerSpec("nikto", "ghcr.io/samma-io/nikto:" + CLASSIC_TAGS["nikto"])
+# nmap's default mode gets NMAP_UNPRIVILEGED=1, which the image honours, and
+# needs no sudo. sudo=True stays only for raw-sockets mode
+# (SAMMA_NMAP_RAW_SOCKETS=true), which is broken with this image until
+# samma-io/nmap#6.
 SCANNERS["nmap"] = ScannerSpec(
     "nmap",
-    "sammascanner/nmap:v0.2",
+    "ghcr.io/samma-io/nmap:" + CLASSIC_TAGS["nmap"],
     sudo=True,
     raw_sockets=True,
     variants=[

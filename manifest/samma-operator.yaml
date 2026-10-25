@@ -535,6 +535,12 @@ spec:
               value: "ghcr.io/samma-io/detect-traceroute-scanner:2.0.2"
             - name: SAMMA_SCANNER_IMAGE_WHOIS_SCANNER
               value: "ghcr.io/samma-io/detect-whois-scanner:2.0.2"
+            # nmap and nikto, pinned to the builds this operator was tested
+            # with (the chart's scanners.classicTags).
+            - name: SAMMA_SCANNER_IMAGE_NIKTO
+              value: "ghcr.io/samma-io/nikto:sha-bb12955"
+            - name: SAMMA_SCANNER_IMAGE_NMAP
+              value: "ghcr.io/samma-io/nmap:sha-c767f51"
             - name: SAMMA_SCANNER_CPU_REQUEST
               value: "100m"
             - name: SAMMA_SCANNER_MEMORY_REQUEST
