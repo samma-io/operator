@@ -362,15 +362,15 @@ for _name in DETECT_SCANNERS:
 # sudo, uid 1000 "samma". The chart and the raw manifest pin the same tags
 # through SAMMA_SCANNER_IMAGE_<NAME> (scanners.classicTags).
 CLASSIC_TAGS = {
-    "nikto": "sha-bb12955",
-    "nmap": "sha-c767f51",
+    "nikto": "sha-362c174",
+    "nmap": "sha-6e0042c",
 }
 
 SCANNERS["nikto"] = ScannerSpec("nikto", "ghcr.io/samma-io/nikto:" + CLASSIC_TAGS["nikto"])
 # nmap's default mode gets NMAP_UNPRIVILEGED=1, which the image honours, and
-# needs no sudo. sudo=True stays only for raw-sockets mode
-# (SAMMA_NMAP_RAW_SOCKETS=true), which is broken with this image until
-# samma-io/nmap#6.
+# needs no sudo. sudo=True keeps allowPrivilegeEscalation for raw-sockets mode
+# (SAMMA_NMAP_RAW_SOCKETS=true): the image's nmap-raw copy carries the NET_RAW
+# file capability, which the kernel grants only without no_new_privs.
 SCANNERS["nmap"] = ScannerSpec(
     "nmap",
     "ghcr.io/samma-io/nmap:" + CLASSIC_TAGS["nmap"],

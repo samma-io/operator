@@ -263,10 +263,10 @@ class ImageTests(unittest.TestCase):
     def test_default_override_and_prefix(self):
         nmap = jobspec.SCANNERS["nmap"]
         dns = jobspec.SCANNERS["dns-scanner"]
-        self.assertEqual(jobspec.image_for(nmap, settings()), "ghcr.io/samma-io/nmap:sha-c767f51")
-        self.assertEqual(jobspec.image_for(jobspec.SCANNERS["nikto"], settings()), "ghcr.io/samma-io/nikto:sha-bb12955")
+        self.assertEqual(jobspec.image_for(nmap, settings()), "ghcr.io/samma-io/nmap:sha-6e0042c")
+        self.assertEqual(jobspec.image_for(jobspec.SCANNERS["nikto"], settings()), "ghcr.io/samma-io/nikto:sha-362c174")
         self.assertEqual(jobspec.image_for(nmap, settings(image_overrides={"nmap": "r.example/nmap:v9"})), "r.example/nmap:v9")
-        self.assertEqual(jobspec.image_for(nmap, settings(image_prefix="r.example/mirror/")), "r.example/mirror/nmap:sha-c767f51")
+        self.assertEqual(jobspec.image_for(nmap, settings(image_prefix="r.example/mirror/")), "r.example/mirror/nmap:sha-6e0042c")
         self.assertEqual(jobspec.image_for(nmap, settings(image_prefix="r.example", image_tag="t1")), "r.example/nmap:t1")
         self.assertEqual(jobspec.image_for(dns, settings(image_prefix="ghcr.io/mirror", image_tag="2026.10")), "ghcr.io/mirror/detect-dns-scanner:2026.10")
         self.assertEqual(jobspec.image_for(jobspec.SCANNERS["base"], settings(image_prefix="r.example")), "r.example/base:latest")
@@ -464,7 +464,7 @@ class ClassicScannerTests(unittest.TestCase):
         spec, variant = run("nikto")
         container = container_of(jobspec.build_job(spec, variant, "www.example.com", {"SAMMA_IO_TAGS": "['a']", "NATS_URL": "x"}, settings()))
         self.assertEqual(container["name"], "nikto")
-        self.assertEqual(container["image"], "ghcr.io/samma-io/nikto:sha-bb12955")
+        self.assertEqual(container["image"], "ghcr.io/samma-io/nikto:sha-362c174")
         self.assertEqual([e["name"] for e in container["env"]], ["TARGET", "SAMMA_IO_SCANNER", "SAMMA_IO_TAGS", "NATS_URL"])
 
     def test_nikto_runs_without_privilege_escalation(self):
