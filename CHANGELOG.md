@@ -5,6 +5,14 @@ A release is a tag `v<version>` on `main`. Pushing it runs
 `oci://ghcr.io/samma-io/charts/samma-operator` and the images to
 `ghcr.io/samma-io/samma-{operator,api,bridge}` (README, "Releases").
 
+## 0.2.4
+
+The same code as 0.2.3. The 0.2.3 release workflow published the chart and
+images but failed at rendering the raw manifest (the chart now requires an
+API token), so it has no GitHub release. The workflow renders the raw
+manifest with `api.existingSecret=samma-api-token` (create that Secret before
+applying it) and the install line names `api.token`. Use 0.2.4.
+
 ## 0.2.3
 
 Security hardening from the samma.io audit, plus the detect 2.0.2 scanners.

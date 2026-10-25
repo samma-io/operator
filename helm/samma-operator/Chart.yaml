@@ -4,8 +4,8 @@ description: Kubernetes operator that runs security scanners against the hosts y
 type: application
 # version and appVersion move together: a release is a tag v<version>, and
 # the release workflow refuses a tag that does not match this file.
-version: 0.2.3
-appVersion: "0.2.3"
+version: 0.2.4
+appVersion: "0.2.4"
 kubeVersion: ">=1.25.0"
 home: https://samma.io
 sources:
