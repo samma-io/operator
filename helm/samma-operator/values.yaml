@@ -131,6 +131,15 @@ api:
   # The uid and gid the pod runs as (the image's user is uid 1000).
   runAsUser: 1000
   runAsGroup: 1000
+  # The inbound bearer token of the REST API (operator#15): it becomes
+  # SAMMA_API_TOKEN, and every endpoint except the health probes and
+  # /metrics must send Authorization: Bearer <token>. Required when enabled:
+  # set token (the chart puts it in the Secret samma-api-token) or
+  # existingSecret (a Secret of your own with the key "token"). There is no
+  # default. Prefer existingSecret under GitOps: a --set api.token lands in
+  # the rendered manifests.
+  token: ""
+  existingSecret: ""
   resources:
     requests:
       cpu: 100m
