@@ -25,16 +25,20 @@ To import manually: **Grafana → Dashboards → Import → Upload JSON file**. 
 ## Usage
 
 ```bash
+# Required — these have no defaults; the script exits 1 if any is unset
 export GRAFANA_URL=http://<grafana-host>:<port>   # e.g. http://localhost:3000
-export GRAFANA_USER=admin
-export GRAFANA_PASSWORD=<your-grafana-password>
+export GRAFANA_USER=<grafana-admin-user>
+export GRAFANA_PASSWORD=$(kubectl get secret -n <grafana-namespace> <grafana-secret> -o jsonpath='{.data.admin-password}' | base64 -d)
+export TSDB_PASSWORD=<timescaledb-password>
+
+# To mint a new password, generate one and store it in a secret — never hard-code it:
+#   openssl rand -base64 24
 
 # Optional — only needed if different from defaults
 export TSDB_HOST=timescaledb.samma-io.svc.cluster.local
 export TSDB_PORT=5432
 export TSDB_DB=samma
 export TSDB_USER=samma
-export TSDB_PASSWORD=samma
 
 python grafana/setup_grafana.py
 ```
@@ -47,13 +51,18 @@ The script is idempotent — running it again updates existing dashboards and sk
 kubectl run grafana-setup --rm -it --restart=Never \
   --image=python:3.12-slim \
   --env="GRAFANA_URL=http://grafana.metrics.svc.cluster.local:3000" \
-  --env="GRAFANA_USER=admin" \
-  --env="GRAFANA_PASSWORD=<password>" \
+  --env="GRAFANA_USER=<grafana-admin-user>" \
+  --env="GRAFANA_PASSWORD=$(kubectl get secret -n <grafana-namespace> <grafana-secret> -o jsonpath='{.data.admin-password}' | base64 -d)" \
+  --env="TSDB_PASSWORD=<timescaledb-password>" \
   -- python -c "$(cat grafana/setup_grafana.py)"
 ```
 
 Or port-forward Grafana locally:
 ```bash
 kubectl port-forward -n metrics svc/grafana 3000:3000
-GRAFANA_URL=http://localhost:3000 GRAFANA_USER=admin GRAFANA_PASSWORD=<pw> python grafana/setup_grafana.py
+GRAFANA_URL=http://localhost:3000 \
+GRAFANA_USER=<grafana-admin-user> \
+GRAFANA_PASSWORD=$(kubectl get secret -n metrics <grafana-secret> -o jsonpath='{.data.admin-password}' | base64 -d) \
+TSDB_PASSWORD=<timescaledb-password> \
+python grafana/setup_grafana.py
 ```

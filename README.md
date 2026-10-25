@@ -600,25 +600,33 @@ one, and point it at TimescaleDB. The `grafana/` directory contains a setup scri
 
 The script pushes a PostgreSQL datasource (pointing at TimescaleDB) and all three dashboards into an existing Grafana via the HTTP API. It is idempotent — safe to re-run.
 
+Four variables are required and have no defaults — the script exits 1 without them: `GRAFANA_URL`, `GRAFANA_USER`, `GRAFANA_PASSWORD` and `TSDB_PASSWORD`. Source the Grafana credentials from your Grafana admin secret and supply the TimescaleDB password you deployed with.
+
 **Port-forward Grafana and run:**
 
 ```bash
 kubectl port-forward -n <grafana-namespace> svc/grafana 3000:80
 
 GRAFANA_URL=http://localhost:3000 \
-GRAFANA_USER=admin \
-GRAFANA_PASSWORD=<password> \
+GRAFANA_USER=<grafana-admin-user> \
+GRAFANA_PASSWORD=$(kubectl get secret -n <grafana-namespace> <grafana-secret> -o jsonpath='{.data.admin-password}' | base64 -d) \
+TSDB_PASSWORD=<timescaledb-password> \
 python grafana/setup_grafana.py
 ```
 
-TimescaleDB is reachable cluster-wide at `timescaledb.samma-io.svc.cluster.local:5432`, so the datasource works from any namespace. Override the connection with env vars if needed:
+To mint a new password instead, generate one and store it in a secret — never hard-code it:
+
+```bash
+openssl rand -base64 24
+```
+
+TimescaleDB is reachable cluster-wide at `timescaledb.samma-io.svc.cluster.local:5432`, so the datasource works from any namespace. Override the connection with env vars if needed (`TSDB_PASSWORD` stays required — no default):
 
 ```bash
 TSDB_HOST=timescaledb.samma-io.svc.cluster.local \
 TSDB_PORT=5432 \
 TSDB_DB=samma \
-TSDB_USER=samma \
-TSDB_PASSWORD=samma \
+TSDB_USER=samma
 ```
 
 ### Import dashboards manually

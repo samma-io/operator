@@ -9,6 +9,7 @@ nodeSelector:
 operator:
   image: mattiashem/samma-operator
   tag: latest
+  digest: sha256:a1c718acbef760fb660a8bfec72a722261111e112ccfd57f5475344eca315613
   pullPolicy: Always
   resources:
     requests:
@@ -22,6 +23,7 @@ operator:
 api:
   image: sammascanner/api
   tag: latest
+  digest: sha256:0cb8f1b94292ea30d850c82db0f3dda02999595841d871431f77d3cb90185dfb
   pullPolicy: Always
   resources:
     requests:
@@ -35,6 +37,7 @@ api:
 nats:
   image: nats
   tag: "2"
+  digest: sha256:023a08c46caa5aff878fb86841187bebfdad9a6e3c552ba5c1a1e18938bbf88a
   resources:
     requests:
       cpu: 50m
@@ -47,6 +50,7 @@ nats:
 timescaledb:
   image: timescale/timescaledb
   tag: latest-pg15
+  digest: sha256:6343bdc87ca132c6b53acb26113a6bad1821d188fa39975a745f32ddd9757634
   storage: 10Gi
   # storageClass: "" # set to use a specific StorageClass
   db: samma
@@ -64,6 +68,7 @@ timescaledb:
 bridge:
   image: sammascanner/bridge
   tag: latest
+  digest: sha256:043ae17d18926b5d0b57058a6b10d845f73723a6bb17eb65031162501eda42c3
   pullPolicy: Always
   resources:
     requests:

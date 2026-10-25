@@ -19,7 +19,7 @@ spec:
       {{- end }}
       containers:
         - name: samma-operator
-          image: {{ .Values.operator.image }}:{{ .Values.operator.tag }}
+          image: {{ .Values.operator.image }}:{{ .Values.operator.tag }}{{ if .Values.operator.digest }}@{{ .Values.operator.digest }}{{ end }}
           imagePullPolicy: {{ .Values.operator.pullPolicy }}
           ports:
             - name: http
