@@ -185,14 +185,17 @@ jobs:
         run: |
           {
             echo "# samma-operator $VERSION, rendered from the Helm chart (helm template --include-crds)."
-            echo "# Set the three CHANGE-ME passwords before applying."
+            echo "# Set the three CHANGE-ME passwords before applying, and create the API"
+            echo "# token Secret first: kubectl -n samma-io create secret generic"
+            echo "# samma-api-token --from-literal=token=<token>"
             echo "# This deploys an operator that scans the hosts this cluster's Ingresses"
             echo "# serve. Only scan hosts you are allowed to scan."
             helm template samma "$CHART" --include-crds --namespace samma-io \
               --set acceptScanningTerms=true \
               --set timescaledb.password=CHANGE-ME-timescaledb-password \
               --set nats.auth.scannerPassword=CHANGE-ME-scanner-password \
-              --set nats.auth.bridgePassword=CHANGE-ME-bridge-password
+              --set nats.auth.bridgePassword=CHANGE-ME-bridge-password \
+              --set api.existingSecret=samma-api-token
           } > "dist/samma-operator-$VERSION.yaml"
 
       - name: Write the release notes
@@ -203,7 +206,7 @@ jobs:
             echo
             echo '```bash'
             echo "helm install samma oci://ghcr.io/$OWNER/charts/samma-operator --version $VERSION \\"
-            echo "  --set acceptScanningTerms=true --set timescaledb.password=<password>"
+            echo "  --set acceptScanningTerms=true --set timescaledb.password=<password> --set api.token=<token>"
             echo '```'
             echo
             echo "Chart \`oci://ghcr.io/$OWNER/charts/samma-operator:$VERSION\`, digest \`$chart_digest\`."

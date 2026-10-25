@@ -1,4 +1,4 @@
-# samma-operator 0.2.3, the same deployment as the Helm chart with its
+# samma-operator 0.2.4, the same deployment as the Helm chart with its
 # defaults (helm/samma-operator), CRDs included. Releases attach a rendered
 # copy of this file.
 #
@@ -453,7 +453,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: samma-operator
-          image: ghcr.io/samma-io/samma-operator:0.2.3
+          image: ghcr.io/samma-io/samma-operator:0.2.4
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -589,7 +589,7 @@ spec:
         kubernetes.io/arch: amd64
       containers:
         - name: samma-api
-          image: ghcr.io/samma-io/samma-api:0.2.3
+          image: ghcr.io/samma-io/samma-api:0.2.4
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -865,7 +865,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: samma-bridge
-          image: ghcr.io/samma-io/samma-bridge:0.2.3
+          image: ghcr.io/samma-io/samma-bridge:0.2.4
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -896,7 +896,7 @@ spec:
             # The release, for the startup banner: keep it equal to the
             # bridge image tag above.
             - name: SAMMA_VERSION
-              value: "0.2.3"
+              value: "0.2.4"
             - name: NATS_URL
               value: nats://nats:4222
             - name: NATS_SUBJECT
