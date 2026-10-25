@@ -173,6 +173,10 @@ nats:
   # A Secret of your own with the keys scanner-password and bridge-password.
   # Empty: the chart manages the Secret samma-nats-auth itself.
   existingSecret: ""
+  # Serves the NATS HTTP monitoring endpoint on 8222 when true: the `http`
+  # line in the server config, the container port, the Service port and the
+  # samma-nats policy entry all follow this switch.
+  monitoring: false
   auth:
     # false runs NATS without authentication (the behaviour before this
     # chart version): no Secret, no credentials in any pod.
@@ -198,6 +202,12 @@ networkPolicies:
   apiServer:
     ports: [443, 6443]
     cidrs: []
+  # Namespaces allowed to reach the API on 8080 (the samma-api policy),
+  # matched through the automatic kubernetes.io/metadata.name label every
+  # namespace carries. The dashboard's namespace must be listed here, or
+  # its calls to the API are dropped; listing a namespace allows every pod
+  # in it. Pods of the release namespace are always allowed.
+  apiClients: []
   # Namespaces allowed to reach TimescaleDB on 5432 (the samma-timescaledb
   # policy), matched through the automatic kubernetes.io/metadata.name
   # label every namespace carries. Listing a namespace allows every pod in

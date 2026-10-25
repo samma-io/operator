@@ -12,6 +12,13 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: samma-io
+  labels:
+    # Pod Security admission: baseline enforce, restricted warn
+    # (violations logged, not blocked). Same labels the Helm chart puts on
+    # the namespace with createNamespace: true; label a namespace you
+    # create yourself the same way.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -664,7 +671,6 @@ metadata:
 data:
   nats-server.conf: |
     listen: 0.0.0.0:4222
-    http: 0.0.0.0:8222
     max_payload: 1MB
     # Passwords come from the environment (Secret samma-nats-auth).
     authorization {
@@ -711,7 +717,6 @@ spec:
           args: ["--config", "/etc/nats/nats-server.conf"]
           ports:
             - containerPort: 4222
-            - containerPort: 8222
           env:
             - name: SAMMA_NATS_SCANNER_PASSWORD
               valueFrom:
@@ -751,9 +756,6 @@ spec:
     - name: client
       port: 4222
       targetPort: 4222
-    - name: monitor
-      port: 8222
-      targetPort: 8222
   type: ClusterIP
 ---
 # TimescaleDB password: SET IT BEFORE APPLYING (alphanumeric; it travels in
@@ -947,7 +949,27 @@ spec:
       ports:
         - port: 4222
           protocol: TCP
-        - port: 8222
+---
+# The API accepts connections on 8080 only from pods in this namespace. To
+# let another namespace in (the dashboard, say), add a namespaceSelector
+# peer with kubernetes.io/metadata.name: <its namespace> — the same list
+# the chart renders from networkPolicies.apiClients.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: samma-api
+  namespace: samma-io
+spec:
+  podSelector:
+    matchLabels:
+      app: samma-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 8080
           protocol: TCP
 ---
 apiVersion: networking.k8s.io/v1

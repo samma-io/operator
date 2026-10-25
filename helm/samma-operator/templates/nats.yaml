@@ -38,7 +38,9 @@ spec:
           args: ["--config", "/etc/nats/nats-server.conf"]
           ports:
             - containerPort: 4222
+            {{- if .Values.nats.monitoring }}
             - containerPort: 8222
+            {{- end }}
           {{- if .Values.nats.auth.enabled }}
           env:
             - name: SAMMA_NATS_SCANNER_PASSWORD
@@ -75,7 +77,9 @@ spec:
     - name: client
       port: 4222
       targetPort: 4222
+    {{- if .Values.nats.monitoring }}
     - name: monitor
       port: 8222
       targetPort: 8222
+    {{- end }}
   type: ClusterIP

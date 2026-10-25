@@ -3,7 +3,11 @@
 Network policies (README, "Network policies"). They only take effect on a
 CNI that enforces NetworkPolicy; on one that does not, they are inert.
 
-  samma-nats      NATS accepts connections only from pods in this namespace.
+  samma-nats      NATS accepts connections only from pods in this namespace,
+                  and on 8222 only while nats.monitoring is true.
+  samma-api       the API accepts connections on 8080 only from pods in this
+                  namespace and from the namespaces listed in the
+                  networkPolicies.apiClients value.
   samma-bridge    the bridge talks to NATS, the Kubernetes API, DNS and,
                   when it stores rows, TimescaleDB; nothing else.
   samma-scanners  scan pods reach DNS, NATS and public addresses only. The
@@ -32,7 +36,34 @@ spec:
       ports:
         - port: 4222
           protocol: TCP
+        {{- if .Values.nats.monitoring }}
         - port: 8222
+          protocol: TCP
+        {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: samma-api
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: samma-api
+  policyTypes:
+    - Ingress
+  # Peers in one rule are OR'd: pods of the release namespace always, plus
+  # one peer per apiClients namespace (each pod of it, on 8080).
+  ingress:
+    - from:
+        - podSelector: {}
+        {{- range .Values.networkPolicies.apiClients }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+        {{- end }}
+      ports:
+        - port: 8080
           protocol: TCP
 ---
 apiVersion: networking.k8s.io/v1
