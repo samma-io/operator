@@ -13,6 +13,7 @@ import requests
 from deployJob import deleteJob, deployJob
 from deploycron import deleteCron, deployCron
 from profile_resolver import resolve_profiles, parse_scanner_spec
+import target_policy
 
 # Import lissen for changes
 ## Setup ENV 
@@ -30,6 +31,11 @@ nats_enabled = os.getenv('NATS_ENABLED', 'True')
 nats_subject = os.getenv('NATS_SUBJECT', 'samma-io.scan')
 default_weekly_schedule = os.getenv('SAMMA_IO_WEEKLY_SCHEDULE', '0 0 * * 0')
 
+# A target that does not resolve is checked again every 5 minutes this many
+# times before the operator gives up on it (DNS is often created after the
+# Ingress, for example by external-dns).
+MAX_RESOLVE_RETRIES = 12
+
 
 
 try:
@@ -42,6 +48,7 @@ config.load_incluster_config()
 api = client.CoreV1Api()
 batch1api = client.BatchV1Api()
 k8sapi =client.CustomObjectsApi()
+networking_api = client.NetworkingV1Api()
 
 
 
@@ -134,12 +141,29 @@ def post_target_to_api(host):
 
 ##Start lookin g for changes
 @kopf.on.create('samma.io', 'v1', 'scanner') 
-def create_fn(body, spec, **kwargs): 
+def create_fn(body, spec, retry, **kwargs): 
     
     #Validate we have values
     name = body['metadata']['name']
-    target = body['spec']['target']
+    target = body['spec'].get('target')
     env_data = {}
+
+    # Refuse the Scanner before anything is created when the target is not a
+    # plain hostname or IP address, is not served by an Ingress (when
+    # SAMMA_ALLOW_UNMANAGED_TARGETS is false) or resolves to a private address
+    # (unless SAMMA_ALLOW_PRIVATE_TARGETS is true). See target_policy.py.
+    try:
+        target_policy.check_target(target, networking_api=networking_api)
+    except target_policy.TargetUnresolvable as e:
+        if retry >= MAX_RESOLVE_RETRIES:
+            kopf.warn(body, reason='TargetRejected',
+                      message="{0}; giving up after {1} attempts".format(e, retry + 1))
+            raise kopf.PermanentError(str(e))
+        kopf.warn(body, reason='TargetUnresolvable', message=str(e))
+        raise kopf.TemporaryError("{0}; retrying in 5 minutes".format(e), delay=300)
+    except target_policy.TargetRejected as e:
+        kopf.warn(body, reason='TargetRejected', message=str(e))
+        raise kopf.PermanentError(str(e))
 
     #Set to none we deploy job else we deploy crontab
     scheduler = "none"
@@ -176,6 +200,17 @@ def create_fn(body, spec, **kwargs):
         pass
 
     templates = body['spec'].get('templates', None)
+
+    # Scanner names become template directory paths and the schedule is
+    # rendered into CronJob YAML, so both are checked with the same patterns
+    # the CRD schema carries.
+    try:
+        for scanner in scanners:
+            target_policy.validate_scanner_name(scanner)
+        target_policy.validate_schedule(scheduler)
+    except target_policy.TargetRejected as e:
+        kopf.warn(body, reason='ScannerRejected', message=str(e))
+        raise kopf.PermanentError(str(e))
 
     env_data['NATS_URL']     = nats_url
     env_data['NATS_ENABLED'] = nats_enabled
@@ -225,7 +260,7 @@ def delete(body, **kwargs):
 
 
 @kopf.on.create('networking.k8s.io', 'v1', 'Ingress')
-def ingress_create_fn(body, spec, **kwargs):
+def ingress_create_fn(body, spec, retry, **kwargs):
 
     deployScanner = False
     scannerData={
@@ -273,11 +308,38 @@ def ingress_create_fn(body, spec, **kwargs):
             logging.warning("No scanner specs resolved for Ingress, falling back to env default")
             scanner_specs = [(s.strip(), None) for s in samma_io_scanners.split(',')]
 
-        targets = body['spec']['rules']
+        # Check every host once before any Scanner is created. Wildcard hosts
+        # are skipped, hosts that fail the target policy get an event on the
+        # Ingress, and hosts that do not resolve yet are retried later.
+        hosts = []
+        deferred = []
+        for rule in body['spec'].get('rules') or []:
+            host = rule.get('host')
+            if not host:
+                logging.info("Ingress rule without a host, nothing to scan")
+                continue
+            if target_policy.is_wildcard_host(host):
+                logging.info("Skipping wildcard Ingress host %s: scanners need a concrete hostname", host)
+                kopf.info(body, reason='WildcardHostSkipped',
+                          message="Skipped wildcard host {0}: scanners need a concrete hostname".format(host))
+                continue
+            try:
+                # This Ingress serves the host, so the managed check is not
+                # needed; the apiserver already checked the host's syntax.
+                target_policy.check_target(host, allow_unmanaged=True)
+            except target_policy.TargetUnresolvable as e:
+                logging.warning("%s", e)
+                deferred.append(host)
+                continue
+            except target_policy.TargetRejected as e:
+                logging.warning("%s", e)
+                kopf.warn(body, reason='TargetRejected', message=str(e))
+                continue
+            hosts.append(host)
+
+        posted = set()
         for scanner, template in scanner_specs:
-            for target in targets:
-                host = target['host']
-                post_target_to_api(host)
+            for host in hosts:
                 host_sanitized = host.replace('.', '-')
                 if template:
                     resource_name = "{0}-{1}-{2}".format(scanner, host_sanitized, template)
@@ -300,10 +362,26 @@ def ingress_create_fn(body, spec, **kwargs):
                 try:
                     api_response = k8sapi.create_namespaced_custom_object(group, version, namespace, plural, scanner_body)
                     logging.info("Scanner with name %s has been created", resource_name)
+                    if host not in posted:
+                        posted.add(host)
+                        post_target_to_api(host)
                 except ApiException as e:
-                    print("Exception when installing the scanner into the cluster: %s\n" % e)
+                    if getattr(e, 'status', None) == 409:
+                        logging.info("Scanner with name %s already exists", resource_name)
+                    else:
+                        print("Exception when installing the scanner into the cluster: %s\n" % e)
+                        kopf.warn(body, reason='ScannerCreateFailed',
+                                  message="Could not create Scanner {0}: {1}".format(resource_name, getattr(e, 'reason', e)))
 
                 logging.debug(scanner_body)
+
+        if deferred:
+            message = "Ingress hosts {0} did not resolve yet".format(", ".join(deferred))
+            if retry >= MAX_RESOLVE_RETRIES:
+                kopf.warn(body, reason='TargetUnresolvable',
+                          message="{0}; giving up after {1} attempts".format(message, retry + 1))
+            else:
+                raise kopf.TemporaryError("{0}; retrying in 5 minutes".format(message), delay=300)
 
 
 
@@ -338,10 +416,11 @@ def ingress_delete(body, **kwargs):
         if not scanner_specs:
             scanner_specs = [(s.strip(), None) for s in samma_io_scanners.split(',')]
 
-        targets = body['spec']['rules']
+        hosts = [rule.get('host') for rule in body['spec'].get('rules') or []]
+        hosts = [host for host in hosts if host and not target_policy.is_wildcard_host(host)]
         for scanner, template in scanner_specs:
-            for target in targets:
-                host_sanitized = target['host'].replace('.', '-')
+            for host in hosts:
+                host_sanitized = host.replace('.', '-')
                 if template:
                     name = "{0}-{1}-{2}".format(scanner, host_sanitized, template)
                 else:

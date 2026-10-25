@@ -109,7 +109,8 @@ spec:
 kubectl apply -f manifest/test/nmap.yaml
 ```
 
-The operator will immediately create a Job and a weekly CronJob for each scanner.
+The operator will immediately create a Job and a weekly CronJob for each scanner. The target
+must pass [target validation](#target-validation).
 
 ### 3. Ingress annotations
 
@@ -168,6 +169,41 @@ Without `profile` or `scanners`, the `default` profile is used.
 
 Keep the annotations in git with the rest of the Ingress. Your scanning setup is then reviewed and
 versioned, and ArgoCD or Flux applies it.
+
+## Target validation
+
+A Scanner target ends up as a command line argument inside a scanner pod and as a value in the
+rendered Job and CronJob YAML, so the operator checks it before it creates anything. Ingress hosts
+are validated by the Kubernetes API server; `Scanner.spec.target` was a free string until now.
+
+1. **Syntax.** The CRD schema and the operator accept a DNS hostname (lowercase labels, no
+   wildcard, no scheme, no path, no whitespace) or an IPv4 or IPv6 address of at most 253
+   characters. `spec.scanners`, `spec.scheduler`, `spec.samma_io_id` and `spec.samma_io_tags` have
+   patterns too. The API server rejects a Scanner that does not match; the operator checks again
+   so Scanners created before the schema was tightened get the same treatment.
+2. **Served by an Ingress.** With `SAMMA_ALLOW_UNMANAGED_TARGETS=false` the target must be the
+   host of an Ingress rule somewhere in the cluster, matched exactly (a wildcard rule does not
+   count). The default is `true`, which keeps the REST API and hand written Scanners working.
+3. **Public address.** With `SAMMA_ALLOW_PRIVATE_TARGETS=false` (the default) the target must
+   resolve only to public addresses. Loopback, RFC 1918, link-local, multicast, carrier-grade NAT
+   (`100.64.0.0/10`) and IPv6 unique local addresses are refused. An IP literal is checked without
+   DNS. Set it to `true` to scan internal services, or when your public hostnames resolve to
+   private addresses from inside the cluster (split-horizon DNS).
+
+A rejected Scanner is not deployed. The reason is logged and written as a Kubernetes event on the
+Scanner (`kubectl -n samma-io describe scanner <name>`). The resource stays in the cluster so the
+reason is easy to find; delete it and create it again after fixing the target.
+
+Wildcard Ingress hosts (`*.example.com`) are skipped with an event on the Ingress: a wildcard is
+not an endpoint that can be scanned. A host that does not resolve yet, for example because DNS is
+created after the Ingress, is checked again every five minutes for an hour before the operator
+gives up on it.
+
+The checks live in `operator/code/target_policy.py` and have unit tests in `operator/tests`:
+
+```bash
+python3 -m unittest discover -s operator/tests -t operator
+```
 
 ---
 
@@ -431,6 +467,8 @@ curl -X DELETE http://localhost:8080/scanner \
 | `SAMMA_IO_API_URL` | — | External samma.io API base URL |
 | `SAMMA_IO_API_TOKEN` | — | Bearer token for external API (skipped if empty) |
 | `SAMMA_IO_PROFILE_ID` | — | Profile ID sent to external API |
+| `SAMMA_ALLOW_PRIVATE_TARGETS` | `false` | `true` lets a target resolve to a private, loopback, link-local, multicast or carrier-grade NAT address. See [Target validation](#target-validation). |
+| `SAMMA_ALLOW_UNMANAGED_TARGETS` | `true` | `false` refuses a Scanner whose target is not the host of an Ingress in the cluster. |
 
 ### API
 

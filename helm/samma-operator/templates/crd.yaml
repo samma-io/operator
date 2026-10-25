@@ -17,23 +17,36 @@ spec:
               type: object
               properties:
                 target:
+                  # A DNS hostname (lowercase labels, no wildcard, no scheme,
+                  # no path) or an IPv4/IPv6 literal. The operator checks the
+                  # same expression again in operator/code/target_policy.py.
                   type: string
+                  maxLength: 253
+                  pattern: '^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*|((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])|[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{0,4}){2,7})$'
                 ip:
                   type: string
                 scheduler:
+                  # Five cron fields, a CronJob @-macro, or "none".
                   type: string
+                  maxLength: 128
+                  pattern: '^\s*(none|@(yearly|annually|monthly|weekly|daily|midnight|hourly)|([A-Za-z0-9*/,?-]+\s+){4}[A-Za-z0-9*/,?-]+)\s*$'
                 scanners:
                   type: array
                   items:
+                    # A scanner directory name, optionally with /template.
                     type: string
+                    maxLength: 128
+                    pattern: '^[a-z0-9-]+(/[a-z0-9-]+)?$'
                 samma_io_json:
                   type: string
                 samma_io_id:
                   type: string
+                  pattern: '^[A-Za-z0-9_.-]{0,128}$'
                 samma_io_tags:
                   type: array
                   items:
                     type: string
+                    pattern: '^[A-Za-z0-9_.-]{1,63}$'
                 write_to_file:
                   type: string
                 elasticsearch:

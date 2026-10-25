@@ -17,6 +17,7 @@ Python-based Kubernetes operator using [kopf](https://kopf.readthedocs.io/). Ent
 - **deployJob.py** — Deploys scanners as Kubernetes Jobs. Reads Jinja2-templated YAML from `/code/scanners/<scanner>/job/` and renders with `NAME`, `TARGET`, `ENV`, `SCANNERFirst`.
 - **deploycron.py** — Deploys scanners as Kubernetes CronJobs. Same pattern but reads from `/code/scanners/<scanner>/cron/`. Default schedule: `SAMMA_IO_WEEKLY_SCHEDULE` env var (default `0 0 * * 0`).
 - **profile_resolver.py** — Reads the `scanner-profiles` ConfigMap and resolves profile names into `(scanner, template_or_none)` tuples.
+- **target_policy.py**: validates `Scanner.spec.target` (hostname or IP pattern shared with the CRD, optional Ingress-served check, public-address check through DNS) plus scanner names and schedules. Imports neither kopf nor the kubernetes client; the API client is passed in. Tests in `operator/tests/`.
 
 The operator also watches Ingress resources: if an Ingress has `samma-io.alpha.kubernetes.io/enable` annotation, it auto-creates Scanner CRDs for each host.
 
@@ -123,6 +124,12 @@ kubectl patch configmap scanner-profiles -n samma-io --type merge \
   -p '{"data":{"my-profile":"nikto,nmap/http"}}'
 ```
 
+### Unit tests
+```bash
+python3 -m unittest discover -s operator/tests -t operator
+```
+No cluster or network needed: DNS and the Ingress listing are faked.
+
 ### Devcontainer
 Open in VS Code → "Reopen in Container". Provides Python 3.12, kubectl, helm, skaffold, k3d, Docker-in-Docker. Post-create script installs dependencies and creates a local k3d cluster.
 
@@ -137,5 +144,6 @@ Open in VS Code → "Reopen in Container". Provides Python 3.12, kubectl, helm, 
 - `SCANNERFirst` is set to `int(target[0])` when the target starts with a digit (IP address), else `"string"`. Used in tsunami templates to switch between `--ip-v4-target` and `--hostname-target`.
 - NATS vars (`NATS_URL`, `NATS_ENABLED`, `NATS_SUBJECT`) are injected into every scanner's env_data by `create_fn`.
 - `profile_resolver.py` exists in both `operator/code/` and `api/code/` — keep them in sync.
+- `Scanner.spec.target` is validated before anything is deployed (`target_policy.check_target`): hostname or IP only, the same regex as the CRD `pattern`. `SAMMA_ALLOW_UNMANAGED_TARGETS` (default `true`) and `SAMMA_ALLOW_PRIVATE_TARGETS` (default `false`) control the Ingress-served and public-address checks. A rejection raises `kopf.PermanentError` and emits a Kubernetes event; an unresolvable name is retried every 5 minutes up to `MAX_RESOLVE_RETRIES`. Wildcard Ingress hosts are skipped. Keep the CRD patterns (helm and manifest copies) identical to the module constants; `operator/tests/test_target_policy.py` checks that.
 - The operator and API images use `nodeSelector: kubernetes.io/arch: amd64`.
 - Python 3.12 is used for operator, API, and bridge images.
