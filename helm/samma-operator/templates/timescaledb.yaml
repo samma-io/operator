@@ -34,6 +34,10 @@ metadata:
   name: timescaledb
   namespace: {{ .Values.namespace }}
 spec:
+  # One pod on a ReadWriteOnce volume: a rolling update deadlocks when the
+  # new pod lands on another node (Multi-Attach), so stop the old one first.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: timescaledb
