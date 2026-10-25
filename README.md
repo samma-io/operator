@@ -79,14 +79,17 @@ tag or a digest with `scanners.images.<scanner>` (see [Scan Jobs and CronJobs](#
 | `ssh-banner-scanner` | `ghcr.io/samma-io/detect-ssh-banner-scanner:2.0.2` |
 | `whois-scanner` | `ghcr.io/samma-io/detect-whois-scanner:2.0.2` |
 
-**classic**: the traditional scanners (`sammascanner/*`). Single container, NATS vars passed
-through env. Their image references are the defaults built into `operator/code/jobspec.py`; they
-move to rebuilt, pinned images in a later release.
+**classic**: the traditional scanners. Single container, NATS vars passed through env. nmap and
+nikto are rebuilt images from [samma-io/nmap](https://github.com/samma-io/nmap) and
+[samma-io/nikto](https://github.com/samma-io/nikto) (no shell, no sudo, uid 1000 `samma`), each
+released on its own; the chart pins each one to its tag in `scanners.classicTags` the same way
+as the detect images (`scanners.imagePrefix`, `scanners.imageTag` and `scanners.images.<scanner>`
+apply to them too). tsunami keeps the default built into `operator/code/jobspec.py`.
 
 | Scanner | Image | Templates |
 |---|---|---|
-| `nikto` | `sammascanner/nikto:v0.2` | none |
-| `nmap` | `sammascanner/nmap:v0.2` | `port`, `http`, `tls` |
+| `nikto` | `ghcr.io/samma-io/nikto:sha-bb12955` | none |
+| `nmap` | `ghcr.io/samma-io/nmap:sha-c767f51` | `port`, `http`, `tls` |
 | `tsunami` | `sammascanner/tsunami:v0.1` | none |
 
 ---
@@ -303,15 +306,17 @@ Scanner pods run under the `samma-scanner` ServiceAccount, which has no rights, 
 - `capabilities: drop: [ALL]`,
 - `readOnlyRootFilesystem: true` with `emptyDir` volumes at `/out` and `/tmp`,
 - requests and limits from `scanners.resources`,
-- `allowPrivilegeEscalation: false`, except for `nikto` and `nmap`: those images run the tool
-  through `sudo`, which needs privilege escalation. The flag goes away once the images run the tool
-  directly. The detect scanners and tsunami do not get it.
+- `allowPrivilegeEscalation: false`, except for `nmap`. Its default mode no longer needs it with
+  the `ghcr.io/samma-io/nmap` image, which runs nmap directly; it stays only for raw-sockets mode
+  (below), which is broken with that image until
+  [samma-io/nmap#6](https://github.com/samma-io/nmap/issues/6). nikto, the detect scanners and
+  tsunami run without it.
 
 nmap SYN scans need raw sockets. With `scanners.nmapRawSockets=false` (the default) no capability
 is added and the nmap containers get `NMAP_UNPRIVILEGED=1`, which nmap reads itself and which makes
-it use connect scans; the nmap image has to pass that through (and use `-sT` for the port scan).
-With `true` the nmap containers get `NET_RAW` and `NMAP_PRIVILEGED=1`, which is today's behaviour.
-Only nmap ever receives the capability.
+it use connect scans; the `ghcr.io/samma-io/nmap` image honours it. With `true` the nmap
+containers get `NET_RAW` and `NMAP_PRIVILEGED=1`; that mode does not work with the current nmap
+image yet (samma-io/nmap#6). Only nmap ever receives the capability.
 
 The legacy `base` scanner keeps its filebeat sidecar; it is the only multi-container scanner. The
 sidecar mounts the `filebeat` and `live` ConfigMaps, which the operator creates at startup only
@@ -325,7 +330,7 @@ default) `pod-security.kubernetes.io/enforce: baseline` and
 namespaces, host paths and added capabilities (beyond `NET_BIND_SERVICE`) — every operator, API,
 bridge, NATS and scanner pod complies. Restricted warn only logs violations, and the API, NATS and
 TimescaleDB pods run without a full restricted securityContext, so expect warnings for them (and
-for nikto and nmap, which keep `allowPrivilegeEscalation` for their `sudo`); they still run. A
+for nmap, which keeps `allowPrivilegeEscalation`); they still run. A
 namespace you create yourself needs the same labels applied by hand. One trade-off to know:
 `scanners.nmapRawSockets=true` adds `NET_RAW`, which baseline enforce rejects — such nmap pods are
 not scheduled until you relax the namespace's enforce label.
@@ -950,7 +955,8 @@ your provider's terms of service. The chart will not render the operator until y
 
 The chart is published to `oci://ghcr.io/samma-io/charts/samma-operator`. Every release pins its
 own images: the chart's `appVersion` is the tag of the operator, API and bridge images, and
-`scanners.detectTag` is the tag of the detect scanner images.
+`scanners.detectTag` is the tag of the detect scanner images, `scanners.classicTags` those of nmap
+and nikto.
 
 ```bash
 helm install samma oci://ghcr.io/samma-io/charts/samma-operator --version 0.2.0 \
@@ -1040,6 +1046,7 @@ kubectl delete crd scanner.samma.io scanreports.samma.io   # Helm leaves CRDs in
 | `nodeSelector` | `kubernetes.io/arch: amd64` | Node selector for all pods |
 | `serviceAccounts.operator` / `api` / `bridge` / `scanner` | `samma-operator`, `samma-api`, `samma-bridge`, `samma-scanner` | ServiceAccount names, see [RBAC](#rbac) |
 | `scanners.detectTag` | `2.0.2` | Tag of every detect scanner image, see [Scanner types](#scanner-types) |
+| `scanners.classicTags` | `nikto: sha-bb12955`, `nmap: sha-c767f51` | Tags of the nmap and nikto images, see [Scanner types](#scanner-types) |
 | `scanners.imagePrefix`, `scanners.imageTag`, `scanners.images` | `""`, `""`, `{}` | Mirror and per-scanner image references, see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs) |
 | `scanners.pullPolicy` | `IfNotPresent` | `imagePullPolicy` of scanner containers |
 | `scanners.resources` | 100m/128Mi requests, 1/512Mi limits | Resources of every scanner container |
