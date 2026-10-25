@@ -127,7 +127,10 @@ The operator creates a Job now and a weekly CronJob for each scanner, both owned
 
 ### 3. Ingress annotations
 
-Add annotations to any Ingress and the operator auto-creates Scanner CRDs for each host:
+Add annotations to an Ingress and the operator auto-creates Scanner CRDs for each host. The
+Ingress has to be in the operator's namespace, or in one of the extra namespaces configured with
+`ingress.watchNamespaces` (`SAMMA_INGRESS_NAMESPACES`, see [Environment
+variables](#environment-variables)):
 
 ```yaml
 kind: Ingress
@@ -184,11 +187,16 @@ other annotations under the prefix are ignored.
   An Ingress in the operator's own namespace also owns its Scanners through `ownerReferences`;
   Kubernetes does not allow an owner in another namespace, which is why the labels exist.
 - **Every other Ingress is left alone.** The handlers match only Ingresses that carry the `enable`
-  annotation, and kopf's own bookkeeping annotation
-  (`kopf.zalando.org/last-handled-configuration`) is stored only on those; it goes away with the
-  Scanners when the annotation is removed. Operators up to 0.2.1 wrote it on every Ingress in the
+  annotation and sit in the operator's namespace or one of the `SAMMA_INGRESS_NAMESPACES`
+  namespaces; an opted-in Ingress anywhere else is skipped with a single log line and creates no
+  Scanners. Kopf's own bookkeeping annotation
+  (`kopf.zalando.org/last-handled-configuration`) is stored on opted-in Ingresses in any
+  namespace; it goes away with the Scanners when the annotation is removed. Operators up to 0.2.1 wrote it on every Ingress in the
   cluster: such a leftover is removed the next time that Ingress changes, or by hand with
   `kubectl annotate ingress <name> -n <namespace> kopf.zalando.org/last-handled-configuration-`.
+  Scanners an older operator created for Ingresses in a namespace you now leave out are not
+  removed by the operator; delete them with
+  `kubectl -n samma-io delete scanner -l samma.io/ingress-namespace=<namespace>`.
 
 Two Ingresses that serve the same host each get their own Scanners; the Jobs and CronJobs for the
 host are shared between them and go away when the last one does. Scanners created through the API
@@ -806,6 +814,7 @@ curl -X DELETE http://localhost:8080/scanner \
 | `SAMMA_IO_PROFILE_ID` | — | Profile ID sent to external API |
 | `SAMMA_ALLOW_PRIVATE_TARGETS` | `false` | `true` lets a target resolve to a private, loopback, link-local, multicast or carrier-grade NAT address. See [Target validation](#target-validation). |
 | `SAMMA_ALLOW_UNMANAGED_TARGETS` | `true` | `false` refuses a Scanner whose target is not the host of an Ingress in the cluster. |
+| `SAMMA_INGRESS_NAMESPACES` | empty | Comma-separated extra namespaces whose Ingresses are handled (` shop , ,api ` parses to `shop`, `api`); `*` restores every namespace, the behaviour before this restriction. The operator's own namespace is always handled. See [Ingress annotations](#ingress-annotations). |
 | `SAMMA_NAMESPACE` | `samma-io` | The namespace Scanners, Jobs and CronJobs live in. The chart sets it from the pod's namespace. |
 | `SAMMA_SCANNER_SERVICE_ACCOUNT` | `samma-scanner` | ServiceAccount of scanner pods. |
 | `SAMMA_MAX_CONCURRENT_SCANS` | `2` | Scan Jobs allowed to run at the same time; `0` for no limit. See [Concurrency and scheduling](#concurrency-and-scheduling). |

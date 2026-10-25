@@ -483,6 +483,10 @@ spec:
               value: "false"
             - name: SAMMA_ALLOW_UNMANAGED_TARGETS
               value: "true"
+            # Extra namespaces whose Ingresses the operator handles; empty
+            # means only the operator's own namespace is handled.
+            - name: SAMMA_INGRESS_NAMESPACES
+              value: ""
             # Scanner Jobs and CronJobs (README, "Scan Jobs and CronJobs")
             - name: SAMMA_SCANNER_SERVICE_ACCOUNT
               value: "samma-scanner"

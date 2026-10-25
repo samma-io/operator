@@ -65,6 +65,10 @@ spec:
               value: {{ .Values.config.allowPrivateTargets | quote }}
             - name: SAMMA_ALLOW_UNMANAGED_TARGETS
               value: {{ .Values.config.allowUnmanagedTargets | quote }}
+            # Extra namespaces whose Ingresses the operator handles; empty is
+            # the operator's own namespace only, '*' is all namespaces.
+            - name: SAMMA_INGRESS_NAMESPACES
+              value: {{ join "," .Values.ingress.watchNamespaces | quote }}
             # Scanner Jobs and CronJobs (values.scanners)
             - name: SAMMA_SCANNER_SERVICE_ACCOUNT
               value: {{ .Values.serviceAccounts.scanner | quote }}

@@ -48,6 +48,29 @@ class OptInTests(unittest.TestCase):
         self.assertFalse(ingress_optin.is_ingress({"metadata": {}}))
 
 
+class NamespaceAllowedTests(unittest.TestCase):
+    OWN = "samma-io"
+
+    def test_own_namespace_is_allowed_with_an_empty_allowed_list(self):
+        self.assertTrue(ingress_optin.ingress_namespace_allowed(self.OWN, self.OWN, []))
+
+    def test_a_namespace_in_the_allowed_list_is_allowed(self):
+        self.assertTrue(ingress_optin.ingress_namespace_allowed("shop", self.OWN, ["shop"]))
+        self.assertTrue(ingress_optin.ingress_namespace_allowed("api", self.OWN, ["shop", "api"]))
+
+    def test_a_namespace_outside_the_allowed_list_is_denied(self):
+        self.assertFalse(ingress_optin.ingress_namespace_allowed("other", self.OWN, []))
+        self.assertFalse(ingress_optin.ingress_namespace_allowed("other", self.OWN, ["shop"]))
+
+    def test_the_star_allows_an_arbitrary_namespace(self):
+        self.assertTrue(ingress_optin.ingress_namespace_allowed("shop", self.OWN, ["*"]))
+        self.assertTrue(ingress_optin.ingress_namespace_allowed("anything", self.OWN, ["covid", "*"]))
+        self.assertTrue(ingress_optin.ingress_namespace_allowed(self.OWN, self.OWN, ["*"]))
+
+    def test_own_namespace_is_allowed_even_when_it_is_not_listed(self):
+        self.assertTrue(ingress_optin.ingress_namespace_allowed(self.OWN, self.OWN, ["shop"]))
+
+
 class DiffBaseActionTests(unittest.TestCase):
     def action(self, body):
         return ingress_optin.diffbase_action(body, KEYS)

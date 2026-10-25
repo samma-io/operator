@@ -9,7 +9,12 @@ make that true:
    the annotation matches no handler. One more update handler watches the
    annotation itself going away (old present, new absent) and removes the
    Scanners, since the filtered handlers no longer match at that point.
-2. kopf stores its diff base (the kopf.zalando.org/last-handled-configuration
+2. An Ingress outside the operator's own namespace has to be listed in
+   SAMMA_INGRESS_NAMESPACES ('*' is every namespace) for the handlers to
+   run on it; the predicate :func:`ingress_namespace_allowed` is the
+   check they use. The ClusterRole stays cluster-wide, so the list can
+   change with an env edit.
+3. kopf stores its diff base (the kopf.zalando.org/last-handled-configuration
    annotation) on every object it watches, handlers or no handlers; that is
    how 0.2.x annotated every Ingress in the cluster. The storage built by
    :func:`make_diffbase_storage` keeps that annotation on opted-in Ingresses
@@ -44,6 +49,16 @@ def is_opted_in(body):
     PRESENT filter. A value such as "false" still counts: the handler then
     runs and removes the Scanners."""
     return ENABLE_ANNOTATION in annotations_of(body)
+
+
+def ingress_namespace_allowed(namespace, own_namespace, allowed):
+    """Whether the operator acts on an Ingress in ``namespace``. Its own
+    namespace is always allowed, even with an empty allow-list; every other
+    namespace has to be listed, and ``'*'`` in the list allows all of them.
+    Plain str/list arguments: the tests run without kopf installed."""
+    if namespace == own_namespace:
+        return True
+    return '*' in allowed or namespace in allowed
 
 
 def diffbase_action(body, keys):

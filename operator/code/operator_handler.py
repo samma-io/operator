@@ -73,6 +73,11 @@ ANNOTATION_PREFIX = ingress_optin.ANNOTATION_PREFIX
 ENABLE_ANNOTATION = ingress_optin.ENABLE_ANNOTATION
 # The kopf filter on every Ingress handler: only opted-in Ingresses match.
 OPTED_IN = {ENABLE_ANNOTATION: kopf.PRESENT}
+# The namespaces whose Ingresses the handlers act on: the operator's own
+# always, plus what SAMMA_INGRESS_NAMESPACES lists, comma-separated with
+# '*' for all. The guard lives in the handlers rather than the RBAC, so the
+# ClusterRole stays cluster-wide and the list can change with an env edit.
+INGRESS_NAMESPACES = [entry.strip() for entry in os.getenv('SAMMA_INGRESS_NAMESPACES', '').split(',') if entry.strip()]
 PROFILE_ANNOTATION = ANNOTATION_PREFIX + 'profile'
 SCANNERS_ANNOTATION = ANNOTATION_PREFIX + 'scanners'
 # The only annotation values that are copied into a Scanner's spec. Anything
@@ -364,9 +369,11 @@ def configure(settings, **_):
     init_operator()
     _, _drainer_stop = start_drainer(scan_queue, SETTINGS.queue_interval_seconds, on_tick=record_job_outcomes)
     logging.info(
-        "samma operator in namespace %s: max %d concurrent scans, deadline %ds, nmap raw sockets %s, NATS credentials %s",
+        "samma operator in namespace %s: max %d concurrent scans, deadline %ds, nmap raw sockets %s, "
+        "NATS credentials %s, Ingress namespaces %s",
         NAMESPACE, SETTINGS.max_concurrent_scans, SETTINGS.scan_deadline_seconds, SETTINGS.nmap_raw_sockets,
         "from Secret {0}".format(SETTINGS.nats_secret) if SETTINGS.nats_secret else "none",
+        ", ".join(INGRESS_NAMESPACES) if INGRESS_NAMESPACES else "own only ({0})".format(NAMESPACE),
     )
 
 
@@ -781,11 +788,34 @@ def delete_scanner(name):
 # Every handler below is filtered on the enable annotation (OPTED_IN), so an
 # Ingress that never carried it matches none of them; ingress_opted_out
 # catches the one transition the filter cannot see, the annotation going
-# away. Together with the diff-base storage set in configure(), the operator
-# reads other Ingresses but never writes to them.
+# away. Ingresses in namespaces outside SAMMA_INGRESS_NAMESPACES are skipped
+# the same way, by the guard each handler calls first. Together with the
+# diff-base storage set in configure(), the operator reads other Ingresses
+# but never writes to them.
+
+# One skip log line per Ingress, not one per event.
+_namespace_skip_logged = set()
+
+
+def ingress_namespace_blocked(meta):
+    """True for an Ingress in a namespace this operator does not act on (its
+    own plus SAMMA_INGRESS_NAMESPACES, '*' is all). The first event on a
+    disallowed Ingress logs the skip, the rest are silent."""
+    namespace = meta.get('namespace')
+    if ingress_optin.ingress_namespace_allowed(namespace, NAMESPACE, INGRESS_NAMESPACES):
+        return False
+    key = "{0}/{1}".format(namespace, meta.get('name'))
+    if key not in _namespace_skip_logged:
+        _namespace_skip_logged.add(key)
+        logging.info("Ingress %s: skipped, only Ingresses in %s and SAMMA_INGRESS_NAMESPACES (%s) are handled",
+                     key, NAMESPACE, ", ".join(INGRESS_NAMESPACES) or "empty")
+    return True
+
 
 @kopf.on.create('networking.k8s.io', 'v1', 'ingresses', annotations=OPTED_IN)
 def ingress_create_fn(body, retry, **kwargs):
+    if ingress_namespace_blocked(body['metadata']):
+        return
     reconcile_ingress(body, retry)
 
 
@@ -793,11 +823,15 @@ def ingress_create_fn(body, retry, **kwargs):
 def ingress_annotations_changed(body, retry, **kwargs):
     """A changed annotation under the prefix, or enable set to "false":
     reconcile_ingress then deletes the Scanners."""
+    if ingress_namespace_blocked(body['metadata']):
+        return
     reconcile_ingress(body, retry)
 
 
 @kopf.on.update('networking.k8s.io', 'v1', 'ingresses', field='spec.rules', annotations=OPTED_IN)
 def ingress_rules_changed(body, retry, **kwargs):
+    if ingress_namespace_blocked(body['metadata']):
+        return
     reconcile_ingress(body, retry)
 
 
@@ -807,6 +841,8 @@ def ingress_opted_out(body, retry, **kwargs):
     """The enable annotation was removed: the Ingress no longer matches the
     filtered handlers, so this one removes its Scanners (ingress_enabled is
     false without the annotation, and reconcile_ingress wants none)."""
+    if ingress_namespace_blocked(body['metadata']):
+        return
     reconcile_ingress(body, retry)
 
 
@@ -816,6 +852,8 @@ def ingress_delete(body, **kwargs):
     operator's namespace are also garbage collected through their owner
     reference; the explicit delete covers every other namespace and the
     names an older operator used."""
+    if ingress_namespace_blocked(body['metadata']):
+        return
     meta = body['metadata']
     for item in list_ingress_scanners(meta['namespace'], meta['name']):
         delete_scanner(item['metadata']['name'])
