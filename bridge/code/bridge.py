@@ -44,11 +44,11 @@ SELECT create_hypertable('scan_results', 'time', if_not_exists => TRUE);
 """
 
 CREATE_READER_ROLE = """
-DO $ BEGIN
+DO $$ BEGIN
     IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'samma_reader') THEN
         CREATE ROLE samma_reader NOLOGIN;
     END IF;
-END $;
+END $$;
 GRANT SELECT ON scan_results TO samma_reader;
 """
 

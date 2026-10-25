@@ -5,6 +5,20 @@ A release is a tag `v<version>` on `main`. Pushing it runs
 `oci://ghcr.io/samma-io/charts/samma-operator` and the images to
 `ghcr.io/samma-io/samma-{operator,api,bridge}` (README, "Releases").
 
+## 0.2.5
+
+Fixes found upgrading a live install to 0.2.4.
+
+- The bridge crashed on start: the SQL that creates `samma_reader` used
+  `DO $ ... END $;` instead of `$$` dollar quotes, which Postgres rejects. A
+  unit test now checks the quoting (`bridge/tests/test_sql.py`).
+- TimescaleDB uses `strategy: Recreate`. With a rolling update the new pod
+  could not attach the ReadWriteOnce volume while the old one still ran on
+  another node, and the rollout hung.
+- The release's raw manifest is rendered with `--no-hooks`: 0.2.4's included
+  the pre-delete cleanup Job, which `kubectl apply` runs at once and which
+  deletes every Scanner. Do not apply the 0.2.4 raw manifest as is.
+
 ## 0.2.4
 
 The same code as 0.2.3. The 0.2.3 release workflow published the chart and
