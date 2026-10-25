@@ -593,7 +593,9 @@ export API_URL=http://localhost:8080
 
 The `/target` endpoint is the primary way to manage scan targets. The API resolves a profile to the correct scanner list and creates one Scanner CRD per scanner.
 
-Every target gets both an immediate Job (runs once now) and a weekly CronJob (`0 0 * * 0`).
+Every target gets both an immediate Job (runs once now) and a weekly CronJob (`0 0 * * 0`). The
+Scanner CRDs and the Jobs/CronJobs behind them are named from your `samma_io_id` (default `1234`),
+not from the hostname, so two tenants can register the same host and each get their own scans.
 
 #### Add a target
 
@@ -644,16 +646,16 @@ Response `201 Created`:
   "target": "www.example.com",
   "profile": "detect",
   "created": [
-    "port-scanner-www-example-com",
-    "dns-scanner-www-example-com",
-    "http-headers-scanner-www-example-com",
-    "tls-scanner-www-example-com"
+    "port-scanner-1234",
+    "dns-scanner-1234",
+    "http-headers-scanner-1234",
+    "tls-scanner-1234"
   ],
   "skipped": []
 }
 ```
 
-`skipped` lists CRDs that already existed (idempotent). Status `207` is returned when some were skipped.
+`skipped` lists CRDs that already existed for this target + `samma_io_id` pair (idempotent). Status `207` is returned when some were skipped.
 
 #### List all targets
 
@@ -671,20 +673,25 @@ Response:
   "targets": [
     {
       "target": "www.example.com",
+      "samma_io_id": "1234",
       "scanners": [
-        "dns-scanner-www-example-com",
-        "http-headers-scanner-www-example-com",
-        "port-scanner-www-example-com",
-        "tls-scanner-www-example-com"
+        "dns-scanner-1234",
+        "http-headers-scanner-1234",
+        "port-scanner-1234",
+        "tls-scanner-1234"
       ]
     }
   ]
 }
 ```
 
+A host registered by two tenants (two `samma_io_id` values) is listed once per id.
+
 #### Remove a target
 
-Deletes all Scanner CRDs for the target (operator then deletes the Jobs/CronJobs).
+Deletes the Scanner CRDs for the target (the operator deletes the Jobs/CronJobs, and Kubernetes
+garbage-collects them with the CRs). Pass the optional `samma_io_id` to delete only one tenant's
+scanners; without it, every Scanner for the host is removed.
 
 ```
 DELETE /target
@@ -700,7 +707,7 @@ Response `200 OK`:
 ```json
 {
   "target": "www.example.com",
-  "deleted": ["port-scanner-www-example-com", "dns-scanner-www-example-com"],
+  "deleted": ["port-scanner-1234", "dns-scanner-1234"],
   "errors": []
 }
 ```
@@ -1050,25 +1057,33 @@ one, and point it at TimescaleDB. The `grafana/` directory contains a setup scri
 
 The script pushes a PostgreSQL datasource (pointing at TimescaleDB) and all three dashboards into an existing Grafana via the HTTP API. It is idempotent — safe to re-run.
 
+Four variables are required and have no defaults — the script exits 1 without them: `GRAFANA_URL`, `GRAFANA_USER`, `GRAFANA_PASSWORD` and `TSDB_PASSWORD`. Source the Grafana credentials from your Grafana admin secret and supply the TimescaleDB password you deployed with.
+
 **Port-forward Grafana and run:**
 
 ```bash
 kubectl port-forward -n <grafana-namespace> svc/grafana 3000:80
 
 GRAFANA_URL=http://localhost:3000 \
-GRAFANA_USER=admin \
-GRAFANA_PASSWORD=<password> \
+GRAFANA_USER=<grafana-admin-user> \
+GRAFANA_PASSWORD=$(kubectl get secret -n <grafana-namespace> <grafana-secret> -o jsonpath='{.data.admin-password}' | base64 -d) \
+TSDB_PASSWORD=<timescaledb-password> \
 python grafana/setup_grafana.py
 ```
 
-TimescaleDB is reachable cluster-wide at `timescaledb.samma-io.svc.cluster.local:5432`, so the datasource works from any namespace. Override the connection with env vars if needed:
+To mint a new password instead, generate one and store it in a secret — never hard-code it:
+
+```bash
+openssl rand -base64 24
+```
+
+TimescaleDB is reachable cluster-wide at `timescaledb.samma-io.svc.cluster.local:5432`, so the datasource works from any namespace. Override the connection with env vars if needed (`TSDB_PASSWORD` stays required — no default):
 
 ```bash
 TSDB_HOST=timescaledb.samma-io.svc.cluster.local \
 TSDB_PORT=5432 \
 TSDB_DB=samma \
-TSDB_USER=samma \
-TSDB_PASSWORD=samma \
+TSDB_USER=samma
 ```
 
 ### Import dashboards manually

@@ -1,4 +1,5 @@
 from flask import Flask, render_template, request
+import ipaddress
 import re
 import yaml
 import json
@@ -34,11 +35,30 @@ def sanitize_name(value):
     return name
 
 
-def make_crd_name(scanner, target, template=None):
-    parts = [scanner, sanitize_name(target)]
+def make_crd_name(scanner, target_id, template=None):
+    """Scanner CRs are keyed by the tenant's samma_io_id, not the hostname, so
+    two tenants registering the same host get their own scanners."""
+    parts = [scanner, sanitize_name(str(target_id))]
     if template:
         parts.append(template)
     return '-'.join(parts)[:63]
+
+
+def is_valid_target(value):
+    """Only IP addresses (IPv4/IPv6) or RFC 1123 hostnames are valid targets."""
+    if not isinstance(value, str):
+        return False
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        pass
+    if len(value) > 253:
+        return False
+    return all(
+        re.match(r'^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$', label)
+        for label in value.split('.')
+    )
 
 ## Setup the flask app
 app = Flask(__name__)
@@ -257,11 +277,16 @@ def list_targets():
 
     target_map = {}
     for item in items:
-        t = item.get('spec', {}).get('target')
+        spec = item.get('spec', {})
+        t = spec.get('target')
         if t:
-            target_map.setdefault(t, []).append(item['metadata']['name'])
+            key = (t, spec.get('samma_io_id'))
+            target_map.setdefault(key, []).append(item['metadata']['name'])
 
-    return {"targets": [{"target": t, "scanners": sorted(n)} for t, n in sorted(target_map.items())]}, 200
+    return {"targets": [
+        {"target": t, "samma_io_id": tid, "scanners": sorted(names)}
+        for (t, tid), names in sorted(target_map.items(), key=lambda kv: (kv[0][0], str(kv[0][1])))
+    ]}, 200
 
 
 @app.route('/target', methods=['PUT'])
@@ -272,6 +297,8 @@ def create_target():
     target = (content.get('target') or '').strip()
     if not target:
         return {"error": "missing required field: target"}, 400
+    if not is_valid_target(target):
+        return {"error": "invalid target: must be an IP address or RFC 1123 hostname"}, 400
 
     profile = content.get('profile', 'default')
     scheduler = content.get('scheduler', '')
@@ -294,7 +321,7 @@ def create_target():
 
     created, skipped = [], []
     for scanner, template in resolved:
-        name = make_crd_name(scanner, target, template)
+        name = make_crd_name(scanner, env_fields['samma_io_id'], template)
         spec = {
             "target": target,
             "scanners": [scanner],
@@ -328,16 +355,24 @@ def create_target():
 def delete_target():
     if not request.is_json:
         return {"error": "request must be JSON"}, 400
-    target = (request.get_json().get('target') or '').strip()
+    content = request.get_json()
+    target = (content.get('target') or '').strip()
     if not target:
         return {"error": "missing required field: target"}, 400
+    target_id = content.get('samma_io_id')
 
     try:
         items = k8sapi.list_namespaced_custom_object(_GROUP, _VERSION, _NS, _PLURAL).get('items', [])
     except ApiException as e:
         return {"error": str(e)}, 500
 
-    to_delete = [i for i in items if i.get('spec', {}).get('target') == target]
+    # With a samma_io_id in the body only that tenant's scanners are deleted;
+    # without one, every Scanner for the target is removed as before.
+    to_delete = [
+        i for i in items
+        if i.get('spec', {}).get('target') == target
+        and (target_id is None or str(i.get('spec', {}).get('samma_io_id')) == str(target_id))
+    ]
     if not to_delete:
         return {"error": "no Scanner CRDs found for target: {0}".format(target)}, 404
 
