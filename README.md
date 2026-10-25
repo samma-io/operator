@@ -739,7 +739,7 @@ GET /scanner
 ```
 
 ```bash
-curl http://localhost:8080/scanner
+curl -H 'Authorization: Bearer $SAMMA_API_TOKEN' http://localhost:8080/scanner
 ```
 
 Returns all Scanner CRDs in the `samma-io` namespace as JSON.
@@ -752,6 +752,7 @@ PUT /scanner
 
 ```bash
 curl -X PUT http://localhost:8080/scanner \
+  -H 'Authorization: Bearer $SAMMA_API_TOKEN' \
   -H 'Content-Type: application/json' \
   -d '{
     "target": "www.example.com",
@@ -769,6 +770,7 @@ DELETE /scanner
 
 ```bash
 curl -X DELETE http://localhost:8080/scanner \
+  -H 'Authorization: Bearer $SAMMA_API_TOKEN' \
   -H 'Content-Type: application/json' \
   -d '{"name": "nmap-www-example-com"}'
 ```
