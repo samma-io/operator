@@ -50,7 +50,7 @@ spec:
             - name: WRITE_TO_FILE
               value: {{ .Values.config.writeToFile | quote }}
             - name: NATS_URL
-              value: {{ .Values.config.natsUrl | quote }}
+              value: {{ include "samma.natsUrl" . | quote }}
             - name: NATS_ENABLED
               value: {{ .Values.config.natsEnabled | quote }}
             - name: NATS_SUBJECT
@@ -119,7 +119,7 @@ spec:
             # NATS credentials for scanner pods (README, "NATS authentication").
             # Empty means scanner pods connect without credentials.
             - name: SAMMA_NATS_SECRET
-              value: {{ if .Values.nats.auth.enabled }}{{ .Values.nats.existingSecret | default "samma-nats-auth" | quote }}{{ else }}""{{ end }}
+              value: {{ include "samma.natsSecret" . | quote }}
             - name: SAMMA_NATS_SCANNER_USER
               value: {{ .Values.nats.auth.scannerUser | quote }}
           resources:

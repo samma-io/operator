@@ -58,16 +58,16 @@ spec:
             - name: SAMMA_VERSION
               value: {{ .Chart.AppVersion | quote }}
             - name: NATS_URL
-              value: {{ .Values.config.natsUrl | quote }}
+              value: {{ include "samma.natsUrl" . | quote }}
             - name: NATS_SUBJECT
               value: {{ .Values.config.natsSubject | quote }}
-            {{- if .Values.nats.auth.enabled }}
+            {{- with include "samma.natsSecret" . }}
             - name: NATS_USER
-              value: {{ .Values.nats.auth.bridgeUser | quote }}
+              value: {{ $.Values.nats.auth.bridgeUser | quote }}
             - name: NATS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.nats.existingSecret | default "samma-nats-auth" }}
+                  name: {{ . }}
                   key: bridge-password
             {{- end }}
             {{- if include "samma.storeInTimescaleDB" . }}
