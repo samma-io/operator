@@ -85,6 +85,23 @@ class ScannerIndex(object):
                 matches.append(item)
         return matches
 
+    def allows(self, target, samma_io_id):
+        """True when a current Scanner owns this (target, tenant id): the
+        target is the target of a Scanner whose spec.samma_io_id equals
+        the message's id, or of a Scanner without one (made from an
+        Ingress, keyed by target alone). Scanner names do not matter
+        here. Fail-closed: False until the first successful list, so a
+        message that cannot be checked against the current Scanners is
+        never stored."""
+        self.refresh()
+        if not self.loaded:
+            return False
+        for item in self._by_target.get(target, []):
+            spec_id = _spec_id(item)
+            if spec_id is None or spec_id == samma_io_id:
+                return True
+        return False
+
     def for_run(self, scanner, target, samma_io_id=None):
         """(Scanners, tenant id) a run is reported under. The operator keys
         a Scanner's Jobs by its spec.samma_io_id, so a run whose id is that

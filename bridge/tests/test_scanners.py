@@ -71,6 +71,39 @@ class ScannerIndexTests(unittest.TestCase):
             items, sid = index.for_run("tls-scanner", TARGET, unknown)
             self.assertEqual(([i["metadata"]["uid"] for i in items], sid), (["ui"], None))
 
+    def test_allows_the_tenant_id_a_scanner_carries(self):
+        """operator#12: a row is stored only for a (target, tenant id)
+        pair a current Scanner owns."""
+        owned = scanner_object(name="tls-a", uid="ua")
+        owned["spec"]["samma_io_id"] = "tenant-a"
+        index = ScannerIndex(ListerSpy([owned]), ttl_seconds=30, clock=self.clock)
+        self.assertTrue(index.allows(TARGET, "tenant-a"))
+
+    def test_allows_rejects_a_foreign_tenant_id(self):
+        owned = scanner_object(name="tls-a", uid="ua")
+        owned["spec"]["samma_io_id"] = "tenant-a"
+        index = ScannerIndex(ListerSpy([owned]), ttl_seconds=30, clock=self.clock)
+        self.assertFalse(index.allows(TARGET, "tenant-b"))
+        self.assertFalse(index.allows(TARGET, None), "no id for a target whose Scanner carries one")
+
+    def test_allows_rejects_an_unknown_target(self):
+        self.assertFalse(self.index.allows("evil.example.com", "tenant-a"))
+
+    def test_allows_any_id_for_an_id_less_scanner(self):
+        """Ingress-made Scanners carry no spec.samma_io_id and keep
+        accepting any id, keyed by target alone."""
+        self.assertTrue(self.index.allows(TARGET, "tenant-a"))
+        self.assertTrue(self.index.allows(TARGET, None))
+
+    def test_allows_is_fail_closed_before_the_first_successful_list(self):
+        lister = ListerSpy(fail=True)
+        index = ScannerIndex(lister, clock=self.clock)
+        self.assertFalse(index.allows(TARGET, "tenant-a"))
+        lister.fail = False
+        lister.items = [scanner_object()]
+        self.clock.advance(31)
+        self.assertTrue(index.allows(TARGET, "anything"))
+
     def test_cache_ttl(self):
         self.index.is_target(TARGET)
         self.index.is_target(TARGET)

@@ -107,12 +107,19 @@ async def main():
     db = await connect_database(config.database_url) if config.database_enabled else None
 
     pipeline = None
-    if config.scanreports_enabled:
+    index = None
+    if config.scanreports_enabled or config.database_enabled:
+        # The Scanner list also gates the TimescaleDB rows (issue #12): a
+        # row is stored only when a current Scanner owns the message's
+        # target and tenant id, so a scanner pod cannot plant findings
+        # under another tenant's id.
         from samma_bridge.kube import KubeStore
 
         store = KubeStore(config.namespace)
         index = ScannerIndex(store.list_scanners, ttl_seconds=config.scanner_cache_seconds)
         index.refresh(force=True)
+
+    if config.scanreports_enabled:
         pipeline = Pipeline(
             config.namespace, store, index, metrics,
             accumulator=Accumulator(config.straggler_wait_seconds, config.run_idle_timeout_seconds),
@@ -126,6 +133,13 @@ async def main():
         if db is None:
             return
         row = message.legacy_row()
+        # index exists whenever the database is on (see above); a message
+        # whose target and tenant id no current Scanner owns is dropped.
+        if not index.allows(row["host"], row["samma_id"]):
+            metrics.dropped.inc("unknown-tenant")
+            log.warning("Dropped row for %s under tenant id %s: no Scanner in %s owns that target and id",
+                        row["host"], row["samma_id"], config.namespace)
+            return
         try:
             await db.execute(INSERT_ROW, row["host"], row["port"], row["status"], row["type"],
                              row["scanner"], row["samma_id"], row["tags"], row["raw"])
