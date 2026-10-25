@@ -3,7 +3,9 @@
 # copy of this file.
 #
 # Set the three CHANGE-ME passwords before applying (NATS scanner and
-# bridge, TimescaleDB). Applying this manifest deploys an operator that
+# bridge, TimescaleDB) and create the Secret samma-api-token by hand, as
+# the API Deployment's SAMMA_API_TOKEN below describes; the API refuses to
+# start without it. Applying this manifest deploys an operator that
 # actively scans the hosts this cluster's Ingresses serve, and any target a
 # Scanner resource names. Only scan hosts you are allowed to scan.
 apiVersion: v1
@@ -601,6 +603,18 @@ spec:
               value: ""
             - name: SAMMA_IO_PROFILE_ID
               value: ""
+            # Secret samma-api-token is created by hand before applying
+            # (kubectl -n samma-io create secret generic samma-api-token
+            # --from-literal=token=<token>). No Secret object is shipped in
+            # this manifest, unlike samma-nats-auth and samma-timescaledb
+            # below: a placeholder would be a publicly known token for the
+            # scan-launch API, and a missing Secret fails closed, the pod
+            # never starts.
+            - name: SAMMA_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: samma-api-token
+                  key: token
           resources:
             requests:
               cpu: 100m

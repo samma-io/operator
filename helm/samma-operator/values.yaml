@@ -138,6 +138,14 @@ api:
     limits:
       cpu: 200m
       memory: 512Mi
+  # The bearer token the API requires on every request (SAMMA_API_TOKEN,
+  # operator#15); it refuses to start without one. One of the two below is
+  # required when api.enabled is true: set token (the chart puts it in the
+  # Secret samma-api-token) or existingSecret (a Secret of your own with the
+  # key "token"). Prefer existingSecret under GitOps — a --set api.token
+  # lands in the rendered manifests. There is no default.
+  token: ""
+  existingSecret: ""
 
 # NATS message broker (README, "NATS authentication")
 nats:
