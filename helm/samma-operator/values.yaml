@@ -54,6 +54,12 @@ operator:
       cpu: 100m
       memory: 256Mi
 
+# Which namespaces' Ingresses the operator handles (README, "Ingress
+# annotations"). Empty means only the operator's own namespace; '*' watches
+# all namespaces (the behaviour before this restriction).
+ingress:
+  watchNamespaces: []
+
 # Scanner Jobs and CronJobs the operator creates (README, "Scan Jobs and CronJobs").
 scanners:
   # The detect scanners (github.com/samma-io/detect) are released together,
