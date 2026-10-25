@@ -64,20 +64,20 @@ There are two scanner families:
 directly to NATS in schema v2, so they have [ScanReports](#scan-reports).
 
 The detect scanners are released together, and the chart pins all of them to one tag,
-`scanners.detectTag` (default `2.0.0`, the detect release this operator was tested with). Point
+`scanners.detectTag` (default `2.0.2`, the detect release this operator was tested with). Point
 them at a mirror with `scanners.imagePrefix` (and `scanners.imageTag`), or pin one scanner to a
 tag or a digest with `scanners.images.<scanner>` (see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs)).
 
 | Scanner | Image |
 |---|---|
-| `port-scanner` | `ghcr.io/samma-io/detect-port-scanner:2.0.0` |
-| `dns-scanner` | `ghcr.io/samma-io/detect-dns-scanner:2.0.0` |
-| `http-headers-scanner` | `ghcr.io/samma-io/detect-http-headers-scanner:2.0.0` |
-| `tls-scanner` | `ghcr.io/samma-io/detect-tls-scanner:2.0.0` |
-| `http-redirect-scanner` | `ghcr.io/samma-io/detect-http-redirect-scanner:2.0.0` |
-| `traceroute-scanner` | `ghcr.io/samma-io/detect-traceroute-scanner:2.0.0` |
-| `ssh-banner-scanner` | `ghcr.io/samma-io/detect-ssh-banner-scanner:2.0.0` |
-| `whois-scanner` | `ghcr.io/samma-io/detect-whois-scanner:2.0.0` |
+| `port-scanner` | `ghcr.io/samma-io/detect-port-scanner:2.0.2` |
+| `dns-scanner` | `ghcr.io/samma-io/detect-dns-scanner:2.0.2` |
+| `http-headers-scanner` | `ghcr.io/samma-io/detect-http-headers-scanner:2.0.2` |
+| `tls-scanner` | `ghcr.io/samma-io/detect-tls-scanner:2.0.2` |
+| `http-redirect-scanner` | `ghcr.io/samma-io/detect-http-redirect-scanner:2.0.2` |
+| `traceroute-scanner` | `ghcr.io/samma-io/detect-traceroute-scanner:2.0.2` |
+| `ssh-banner-scanner` | `ghcr.io/samma-io/detect-ssh-banner-scanner:2.0.2` |
+| `whois-scanner` | `ghcr.io/samma-io/detect-whois-scanner:2.0.2` |
 
 **classic**: the traditional scanners (`sammascanner/*`). Single container, NATS vars passed
 through env. Their image references are the defaults built into `operator/code/jobspec.py`; they
@@ -994,7 +994,7 @@ kubectl delete crd scanner.samma.io scanreports.samma.io   # Helm leaves CRDs in
 | `config.allowPrivateTargets`, `config.allowUnmanagedTargets` | `"false"`, `"true"` | See [Target validation](#target-validation) |
 | `nodeSelector` | `kubernetes.io/arch: amd64` | Node selector for all pods |
 | `serviceAccounts.operator` / `api` / `bridge` / `scanner` | `samma-operator`, `samma-api`, `samma-bridge`, `samma-scanner` | ServiceAccount names, see [RBAC](#rbac) |
-| `scanners.detectTag` | `2.0.0` | Tag of every detect scanner image, see [Scanner types](#scanner-types) |
+| `scanners.detectTag` | `2.0.2` | Tag of every detect scanner image, see [Scanner types](#scanner-types) |
 | `scanners.imagePrefix`, `scanners.imageTag`, `scanners.images` | `""`, `""`, `{}` | Mirror and per-scanner image references, see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs) |
 | `scanners.pullPolicy` | `IfNotPresent` | `imagePullPolicy` of scanner containers |
 | `scanners.resources` | 100m/128Mi requests, 1/512Mi limits | Resources of every scanner container |
