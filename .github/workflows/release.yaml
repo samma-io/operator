@@ -184,13 +184,13 @@ jobs:
       - name: Render the raw manifest
         run: |
           {
-            echo "# samma-operator $VERSION, rendered from the Helm chart (helm template --include-crds)."
+            echo "# samma-operator $VERSION, rendered from the Helm chart (helm template --include-crds --no-hooks)."
             echo "# Set the three CHANGE-ME passwords before applying, and create the API"
             echo "# token Secret first: kubectl -n samma-io create secret generic"
             echo "# samma-api-token --from-literal=token=<token>"
             echo "# This deploys an operator that scans the hosts this cluster's Ingresses"
             echo "# serve. Only scan hosts you are allowed to scan."
-            helm template samma "$CHART" --include-crds --namespace samma-io \
+            helm template samma "$CHART" --include-crds --no-hooks --namespace samma-io \
               --set acceptScanningTerms=true \
               --set timescaledb.password=CHANGE-ME-timescaledb-password \
               --set nats.auth.scannerPassword=CHANGE-ME-scanner-password \
