@@ -506,7 +506,7 @@ pod. The operator passes credentials to scanner pods only when `SAMMA_NATS_SECRE
 
 ## Network policies
 
-The chart ships three NetworkPolicies (`networkPolicies.enabled`, default `true`; also in the raw
+The chart ships four NetworkPolicies (`networkPolicies.enabled`, default `true`; also in the raw
 manifest):
 
 | Policy | Selects | Allows |
@@ -514,6 +514,7 @@ manifest):
 | `samma-nats` | the NATS pod | ingress on 4222 and 8222 from pods in the release namespace only |
 | `samma-bridge` | the bridge | egress to NATS, TimescaleDB (while `bridge.storeInTimescaleDB` is on), DNS, and the Kubernetes API server |
 | `samma-scanners` | scan pods (`app.kubernetes.io/managed-by=samma-operator`, `samma.io/role=scanner`) | egress to DNS, NATS and public addresses only |
+| `samma-timescaledb` | the TimescaleDB pod (while `timescaledb.enabled` is on) | ingress on 5432 from the bridge and from the namespaces in `networkPolicies.timescaledbClients` only |
 
 "Public addresses only" means `0.0.0.0/0` except `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
 `100.64.0.0/10`, `169.254.0.0/16` and `127.0.0.0/8`, and `::/0` except `fc00::/7`, `fe80::/10`
@@ -524,6 +525,14 @@ address) the except lists are left out, and the scanners can reach the cluster n
 The API server is not a pod, so the bridge's policy reaches it by port: 443 and 6443 to any
 address by default (`networkPolicies.apiServer.ports`). Set `networkPolicies.apiServer.cidrs` to
 restrict that to your control plane's addresses.
+
+The `samma-timescaledb` policy renders while `timescaledb.enabled` is on and closes TimescaleDB
+itself: on 5432, only the bridge pod and pods in the `networkPolicies.timescaledbClients`
+namespaces get in. Client namespaces are matched through the automatic
+`kubernetes.io/metadata.name` label every namespace carries, so listing a namespace needs no extra
+labels — and allows every pod in it on 5432. The policy also restricts pods of the release
+namespace itself, so a reader running in `samma-io` (a Grafana there, say) has to be listed too:
+`timescaledbClients: [samma-io]`. See [TimescaleDB roles](#timescaledb-roles) for what may log in.
 
 A NetworkPolicy is only enforced by a CNI that implements it (Calico, Cilium, Antrea, kube-router,
 and most managed offerings do; Flannel on its own does not). Without such a CNI the objects are
@@ -1073,6 +1082,27 @@ release into their own registry without depending on GHCR at deploy time.
 All findings for all your targets end up in TimescaleDB in your cluster, and Grafana is where you
 read them. The operator chart does not install Grafana: use the one you already run, or install
 one, and point it at TimescaleDB. The `grafana/` directory contains a setup script and pre-built dashboard JSON files.
+
+### TimescaleDB roles
+
+At every startup the bridge ensures the read-only role `samma_reader`: `NOLOGIN`, with `SELECT` on
+`scan_results`. It is idempotent — the `CREATE ROLE` runs inside a `DO` block that checks
+`pg_catalog.pg_roles` first — so it is safe on an existing database as much as on a fresh one.
+
+Giving the dashboard a login is a manual step; the bridge never creates a login or a password.
+Create one and grant it membership of `samma_reader`, for example through `kubectl exec` into the
+timescaledb pod:
+
+```bash
+kubectl -n samma-io exec deploy/timescaledb -- psql -U samma -d samma \
+  -c "CREATE ROLE dashboard LOGIN PASSWORD '<generated>' IN ROLE samma_reader"
+```
+
+Generate the password yourself (`openssl rand -base64 24`) and store it in a Secret. Point the
+Grafana datasource at the `dashboard` role — never connect a reader as `samma`, the table owner,
+which can write and drop. Namespace-wise, the dashboard (and any Grafana) may only reach the
+database where the `samma-timescaledb` network policy allows it: put their namespaces into
+`networkPolicies.timescaledbClients` (see [Network policies](#network-policies)).
 
 ### Dashboards
 

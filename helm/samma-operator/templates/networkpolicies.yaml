@@ -11,6 +11,9 @@ CNI that enforces NetworkPolicy; on one that does not, they are inert.
                   ranges are excluded unless config.allowPrivateTargets is
                   "true", which is also when the operator lets a Scanner
                   point at such an address.
+  samma-timescaledb  TimescaleDB accepts ingress on 5432 only from the
+                     bridge pod and from the namespaces listed in the
+                     networkPolicies.timescaledbClients value.
 */ -}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -125,4 +128,31 @@ spec:
               - fe80::/10
               - ::1/128
             {{- end }}
+{{- if .Values.timescaledb.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: samma-timescaledb
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: timescaledb
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: samma-bridge
+        {{- range .Values.networkPolicies.timescaledbClients }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+        {{- end }}
+      ports:
+        - port: 5432
+          protocol: TCP
+{{- end }}
 {{- end }}

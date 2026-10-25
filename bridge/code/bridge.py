@@ -43,6 +43,15 @@ CREATE TABLE IF NOT EXISTS scan_results (
 SELECT create_hypertable('scan_results', 'time', if_not_exists => TRUE);
 """
 
+CREATE_READER_ROLE = """
+DO $ BEGIN
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'samma_reader') THEN
+        CREATE ROLE samma_reader NOLOGIN;
+    END IF;
+END $;
+GRANT SELECT ON scan_results TO samma_reader;
+"""
+
 INSERT_ROW = """INSERT INTO scan_results
    (host, port, status, type, scanner, samma_id, tags, raw)
    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"""
@@ -61,7 +70,9 @@ async def connect_database(url):
             log.warning("DB not ready, retrying in 5s: %s", exc)
             await asyncio.sleep(5)
     await db.execute(CREATE_TABLE)
+    await db.execute(CREATE_READER_ROLE)
     log.info("TimescaleDB ready")
+    log.info("samma_reader role ready")
     return db
 
 

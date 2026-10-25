@@ -1031,6 +1031,32 @@ spec:
               - fc00::/7
               - fe80::/10
               - ::1/128
+---
+# TimescaleDB accepts ingress on 5432 only from the bridge pod. To allow the
+# dashboard (or a Grafana namespace), add a namespaceSelector peer with
+# kubernetes.io/metadata.name: <its namespace> (Helm:
+# networkPolicies.timescaledbClients). Listing a namespace allows every pod
+# in it on 5432.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: samma-timescaledb
+  namespace: samma-io
+spec:
+  podSelector:
+    matchLabels:
+      app: timescaledb
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: samma-bridge
+      ports:
+        - port: 5432
+          protocol: TCP
+---
 # Uninstall: the Helm chart runs operator/code/uninstall_cleanup.py from a
 # pre-delete hook. With the raw manifest, delete every Scanner first:
 #   kubectl -n samma-io delete scanner --all
