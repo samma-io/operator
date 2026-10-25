@@ -47,7 +47,9 @@ metadata:
 data:
   nats-server.conf: |
     listen: 0.0.0.0:4222
+    {{- if .Values.nats.monitoring }}
     http: 0.0.0.0:8222
+    {{- end }}
     max_payload: 1MB
     {{- if .Values.nats.auth.enabled }}
     # Passwords come from the environment (Secret samma-nats-auth).

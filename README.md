@@ -319,6 +319,17 @@ with `scanners.legacyBaseScanner: true` (`SAMMA_LEGACY_BASE_SCANNER`). Nothing e
 by default they are not created, and a Scanner that asks for `base` gets a `LegacyScanner` warning
 event instead of a pod that never starts.
 
+Pod Security admission: the chart labels the namespace it creates (`createNamespace: true`, the
+default) `pod-security.kubernetes.io/enforce: baseline` and
+`pod-security.kubernetes.io/warn: restricted`. Baseline enforce blocks privileged pods, host
+namespaces, host paths and added capabilities (beyond `NET_BIND_SERVICE`) — every operator, API,
+bridge, NATS and scanner pod complies. Restricted warn only logs violations, and the API, NATS and
+TimescaleDB pods run without a full restricted securityContext, so expect warnings for them (and
+for nikto and nmap, which keep `allowPrivilegeEscalation` for their `sudo`); they still run. A
+namespace you create yourself needs the same labels applied by hand. One trade-off to know:
+`scanners.nmapRawSockets=true` adds `NET_RAW`, which baseline enforce rejects — such nmap pods are
+not scheduled until you relax the namespace's enforce label.
+
 ### Concurrency and scheduling
 
 A Scanner's first Jobs go through a queue. At most `scanners.maxConcurrentScans` scan Jobs
@@ -506,12 +517,13 @@ pod. The operator passes credentials to scanner pods only when `SAMMA_NATS_SECRE
 
 ## Network policies
 
-The chart ships four NetworkPolicies (`networkPolicies.enabled`, default `true`; also in the raw
+The chart ships five NetworkPolicies (`networkPolicies.enabled`, default `true`; also in the raw
 manifest):
 
 | Policy | Selects | Allows |
 |---|---|---|
-| `samma-nats` | the NATS pod | ingress on 4222 and 8222 from pods in the release namespace only |
+| `samma-nats` | the NATS pod | ingress on 4222 from pods in the release namespace only; on 8222 too while `nats.monitoring` is true |
+| `samma-api` | the API pod | ingress on 8080 from pods in the release namespace and from the namespaces in `networkPolicies.apiClients` only |
 | `samma-bridge` | the bridge | egress to NATS, TimescaleDB (while `bridge.storeInTimescaleDB` is on), DNS, and the Kubernetes API server |
 | `samma-scanners` | scan pods (`app.kubernetes.io/managed-by=samma-operator`, `samma.io/role=scanner`) | egress to DNS, NATS and public addresses only |
 | `samma-timescaledb` | the TimescaleDB pod (while `timescaledb.enabled` is on) | ingress on 5432 from the bridge and from the namespaces in `networkPolicies.timescaledbClients` only |
@@ -533,6 +545,13 @@ namespaces get in. Client namespaces are matched through the automatic
 labels — and allows every pod in it on 5432. The policy also restricts pods of the release
 namespace itself, so a reader running in `samma-io` (a Grafana there, say) has to be listed too:
 `timescaledbClients: [samma-io]`. See [TimescaleDB roles](#timescaledb-roles) for what may log in.
+
+The `samma-api` policy closes the API the same way: on 8080, only pods of the release namespace
+and pods in the `networkPolicies.apiClients` namespaces get in. Client namespaces are matched
+through the automatic `kubernetes.io/metadata.name` label too, and listing a namespace allows
+every pod in it. When you run the samma.io dashboard (or any other client) outside the release
+namespace, its namespace must be listed in `networkPolicies.apiClients`, or its calls to the API
+are dropped. The default (`[]`) allows same-namespace pods only.
 
 A NetworkPolicy is only enforced by a CNI that implements it (Calico, Cilium, Antrea, kube-router,
 and most managed offerings do; Flannel on its own does not). Without such a CNI the objects are
@@ -988,10 +1007,12 @@ kubectl delete crd scanner.samma.io scanreports.samma.io   # Helm leaves CRDs in
 | `nats.auth.enabled` | `true` | NATS users with publish-only and subscribe-only rights, see [NATS authentication](#nats-authentication) |
 | `nats.existingSecret` | `""` | Your own Secret with `scanner-password` and `bridge-password` |
 | `nats.auth.scannerPassword`, `nats.auth.bridgePassword` | `""` | Fixed passwords; empty means kept from the cluster or generated |
+| `nats.monitoring` | `false` | Serves the NATS HTTP monitoring endpoint on 8222: the server config's `http` line, the container port, the Service port and the `samma-nats` policy entry follow this switch |
 | `bridge.scanReports` | `true` | Write ScanReport objects, see [Scan reports](#scan-reports) |
 | `bridge.storeInTimescaleDB` | `true` | Insert every message into TimescaleDB (needs `timescaledb.enabled`) |
-| `networkPolicies.enabled` | `true` | NetworkPolicies for NATS, the bridge and scan pods, see [Network policies](#network-policies) |
+| `networkPolicies.enabled` | `true` | NetworkPolicies for NATS, the API, the bridge and scan pods, see [Network policies](#network-policies) |
 | `networkPolicies.apiServer.ports`, `.cidrs` | `[443, 6443]`, `[]` | How the bridge may reach the API server |
+| `networkPolicies.apiClients` | `[]` | Namespace names (matched via `kubernetes.io/metadata.name`) whose pods may reach the API on 8080; the dashboard's namespace must be listed or its calls are dropped. See [Network policies](#network-policies) |
 
 ---
 
