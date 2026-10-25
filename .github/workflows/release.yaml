@@ -78,9 +78,9 @@ jobs:
 
       - name: Lint and render the chart
         run: |
-          helm lint "$CHART" --set acceptScanningTerms=true --set timescaledb.password=lint
+          helm lint "$CHART" --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint
           helm template samma "$CHART" --include-crds \
-            --set acceptScanningTerms=true --set timescaledb.password=lint > /dev/null
+            --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint > /dev/null
           helm template samma "$CHART" --include-crds \
             --set acceptScanningTerms=true --set timescaledb.enabled=false --set api.enabled=false > /dev/null
 
