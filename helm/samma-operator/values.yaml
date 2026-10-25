@@ -198,6 +198,13 @@ networkPolicies:
   apiServer:
     ports: [443, 6443]
     cidrs: []
+  # Namespaces allowed to reach TimescaleDB on 5432 (the samma-timescaledb
+  # policy), matched through the automatic kubernetes.io/metadata.name
+  # label every namespace carries. Listing a namespace allows every pod in
+  # it on 5432. The samma.io dashboard's namespace must be listed for it to
+  # read scan_results; same for any Grafana namespace. Empty allows only
+  # the bridge pod (in the release namespace).
+  timescaledbClients: []
 
 # TimescaleDB: scan results storage for Grafana. false installs no database
 # and no PVC; the bridge then writes ScanReports only (bridge.storeInTimescaleDB
