@@ -216,11 +216,15 @@ def create_fn(body, spec, retry, **kwargs):
     env_data['NATS_ENABLED'] = nats_enabled
     env_data['NATS_SUBJECT'] = nats_subject
 
-    #Deploy the scanners — always run an immediate Job and a weekly CronJob
+    #Deploy the scanners — always run an immediate Job and a weekly CronJob.
+    #Jobs/CronJobs are keyed by the tenant's samma_io_id and carry an owner
+    #reference so Kubernetes removes them together with the Scanner CR.
+    scanner_id = spec.get('samma_io_id')
+    owner = {'name': name, 'uid': body['metadata'].get('uid')}
     cron_schedule = scheduler if scheduler != "none" else default_weekly_schedule
     for scanner in scanners:
-        deployJob(scanner, target, env_data, templates=templates)
-        deployCron(scanner, target, cron_schedule, env_data, templates=templates)
+        deployJob(scanner, target, env_data, templates=templates, samma_io_id=scanner_id, owner=owner)
+        deployCron(scanner, target, cron_schedule, env_data, templates=templates, samma_io_id=scanner_id, owner=owner)
 
 
 
@@ -242,10 +246,11 @@ def delete(body, **kwargs):
     except:
         pass
     templates = body['spec'].get('templates', None)
+    scanner_id = body['spec'].get('samma_io_id')
     for scanner in scanners:
         try:
-            deleteJob(scanner, target, templates=templates)
-            deleteCron(scanner, target, templates=templates)
+            deleteJob(scanner, target, templates=templates, samma_io_id=scanner_id)
+            deleteCron(scanner, target, templates=templates, samma_io_id=scanner_id)
         except:
             logging.info("Got some error when deleteing")
 
