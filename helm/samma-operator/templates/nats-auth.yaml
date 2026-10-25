@@ -15,7 +15,11 @@ Their passwords live in the Secret `samma-nats-auth` with the keys
 so with 3. and 4. every render produces new passwords; that is a Helm
 limitation of `lookup`, not drift. GitOps tools that render templates
 should use 1. or 2.
+
+Both the Secret and the server config belong to the bundled NATS and are
+left out with nats.enabled=false.
 */ -}}
+{{- if .Values.nats.enabled }}
 {{- if .Values.nats.auth.enabled }}
 {{- if not .Values.nats.existingSecret }}
 {{- $scannerPassword := .Values.nats.auth.scannerPassword | default "" }}
@@ -74,3 +78,4 @@ data:
       ]
     }
     {{- end }}
+{{- end }}

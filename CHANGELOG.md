@@ -5,6 +5,17 @@ A release is a tag `v<version>` on `main`. Pushing it runs
 `oci://ghcr.io/samma-io/charts/samma-operator` and the images to
 `ghcr.io/samma-io/samma-{operator,api,bridge}` (README, "Releases").
 
+## Unreleased
+
+- `nats.enabled` (default `true`) gates the bundled NATS: its Deployment,
+  Service, `nats-config` ConfigMap, `samma-nats-auth` Secret and the
+  `samma-nats` NetworkPolicy. With `false` the operator, the bridge and the
+  scanner Jobs and CronJobs use the NATS at `config.natsUrl`; with
+  `nats.auth.enabled` on, `nats.existingSecret` must hold the scanner and
+  bridge passwords that NATS accepts. `networkPolicies.externalNats` opens
+  the bridge's and the scanners' egress to it (README, "External NATS").
+  Renders with the defaults are unchanged (operator#2).
+
 ## 0.2.5
 
 Fixes found upgrading a live install to 0.2.4.

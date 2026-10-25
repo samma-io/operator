@@ -513,6 +513,49 @@ manifest ships the Secret with placeholder values that you must replace before a
 `nats.auth.enabled=false` restores the old unauthenticated NATS: no Secret, no credentials in any
 pod. The operator passes credentials to scanner pods only when `SAMMA_NATS_SECRET` names a Secret.
 
+### External NATS
+
+The NATS URL and subject come from the chart values `config.natsUrl` and `config.natsSubject`
+only: the operator reads `NATS_URL` and `NATS_SUBJECT` from its own environment and hands them to
+every scanner Job and CronJob, and the bridge reads the same two values. No Scanner field, Ingress
+annotation or target can change them.
+
+`nats.enabled=false` leaves the bundled NATS out: its Deployment, Service, the `nats-config`
+ConfigMap, the `samma-nats-auth` Secret and the `samma-nats` NetworkPolicy. The operator, the
+bridge and the scanner pods then connect to `config.natsUrl`, which you point at a NATS you run.
+That NATS has to accept, on `config.natsSubject` and `<natsSubject>.>`:
+
+- **With `nats.auth.enabled=true`** (the default): publishes from the user `nats.auth.scannerUser`
+  (`scanner`) and subscriptions from `nats.auth.bridgeUser` (`bridge`), with the passwords in the
+  Secret named by `nats.existingSecret` (keys `scanner-password` and `bridge-password`, URL-safe).
+  `nats.existingSecret` is required then: the chart renders no Secret for an external NATS and
+  refuses to render without one rather than connect anonymously. `SAMMA_NATS_SECRET` is that
+  Secret, so scanner pods get `NATS_USER`, `NATS_PASSWORD` and a `NATS_URL` with credentials as
+  above, and the bridge gets its user and password from the same Secret. Give the two users the
+  same publish-only and subscribe-only rights as the bundled config (`templates/nats-auth.yaml`).
+- **With `nats.auth.enabled=false`**: anonymous connections. `SAMMA_NATS_SECRET` is empty and no
+  pod gets credentials.
+
+The bridge also accepts a credentials file (`NATS_CREDS`), which the chart does not mount.
+
+With `networkPolicies.enabled`, the bridge and scanner policies allow egress to the external NATS
+through `networkPolicies.externalNats`: its `ports` (`[4222]`) to the NetworkPolicy peers in `to`.
+A NetworkPolicy cannot name a host, so list the NATS server's address (`ipBlock`) or, for a NATS in
+the same cluster, its namespace and pods (`namespaceSelector` and `podSelector`). While `to` is
+empty the ports are allowed to any address, private ones included; set it.
+
+```yaml
+nats:
+  enabled: false
+  existingSecret: my-nats-passwords
+config:
+  natsUrl: nats://<your NATS>:4222
+networkPolicies:
+  externalNats:
+    to:
+      - ipBlock: {cidr: <its address>/32}
+```
+
 ---
 
 ## Network policies
@@ -522,10 +565,10 @@ manifest):
 
 | Policy | Selects | Allows |
 |---|---|---|
-| `samma-nats` | the NATS pod | ingress on 4222 from pods in the release namespace only; on 8222 too while `nats.monitoring` is true |
+| `samma-nats` | the NATS pod (while `nats.enabled` is on) | ingress on 4222 from pods in the release namespace only; on 8222 too while `nats.monitoring` is true |
 | `samma-api` | the API pod | ingress on 8080 from pods in the release namespace and from the namespaces in `networkPolicies.apiClients` only |
-| `samma-bridge` | the bridge | egress to NATS, TimescaleDB (while `bridge.storeInTimescaleDB` is on), DNS, and the Kubernetes API server |
-| `samma-scanners` | scan pods (`app.kubernetes.io/managed-by=samma-operator`, `samma.io/role=scanner`) | egress to DNS, NATS and public addresses only |
+| `samma-bridge` | the bridge | egress to NATS (the external one through `networkPolicies.externalNats` while `nats.enabled` is off, see [External NATS](#external-nats)), TimescaleDB (while `bridge.storeInTimescaleDB` is on), DNS, and the Kubernetes API server |
+| `samma-scanners` | scan pods (`app.kubernetes.io/managed-by=samma-operator`, `samma.io/role=scanner`) | egress to DNS, NATS (likewise) and public addresses only |
 | `samma-timescaledb` | the TimescaleDB pod (while `timescaledb.enabled` is on) | ingress on 5432 from the bridge and from the namespaces in `networkPolicies.timescaledbClients` only |
 
 "Public addresses only" means `0.0.0.0/0` except `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
@@ -982,6 +1025,7 @@ kubectl delete crd scanner.samma.io scanreports.samma.io   # Helm leaves CRDs in
 | `api.enabled` | `true` | Deploy the REST API |
 | `api.image`, `.tag`, `.digest`, `.pullPolicy` | `ghcr.io/samma-io/samma-api`, `""`, `""`, `IfNotPresent` | API image |
 | `bridge.image`, `.tag`, `.digest`, `.pullPolicy` | `ghcr.io/samma-io/samma-bridge`, `""`, `""`, `IfNotPresent` | Bridge image |
+| `nats.enabled` | `true` | Deploy the bundled NATS; `false` uses the NATS at `config.natsUrl`, see [External NATS](#external-nats) |
 | `nats.image`, `.tag`, `.digest`, `.pullPolicy` | `nats`, `2`, `""`, `IfNotPresent` | NATS image |
 | `timescaledb.enabled` | `true` | Deploy TimescaleDB and its PVC |
 | `timescaledb.password`, `timescaledb.existingSecret` | `""`, `""` | One of the two is required when enabled: the password (stored in the Secret `samma-timescaledb`) or your own Secret with the key `password`. No default |
@@ -990,7 +1034,8 @@ kubectl delete crd scanner.samma.io scanreports.samma.io   # Helm leaves CRDs in
 | `config.sammaIoId` | `""` | Default asset ID attached to all scans |
 | `config.sammaIoTags` | `['scanner']` | Default tags |
 | `config.apiToken` | `""` | External samma.io API token |
-| `config.natsUrl` | `nats://nats:4222` | NATS server URL |
+| `config.natsUrl` | `nats://nats:4222` | NATS server URL for the operator's scanner Jobs and CronJobs and the bridge; required |
+| `config.natsSubject` | `samma-io.scan` | Base subject; scanners publish on `<natsSubject>.<scanner>` |
 | `config.allowPrivateTargets`, `config.allowUnmanagedTargets` | `"false"`, `"true"` | See [Target validation](#target-validation) |
 | `nodeSelector` | `kubernetes.io/arch: amd64` | Node selector for all pods |
 | `serviceAccounts.operator` / `api` / `bridge` / `scanner` | `samma-operator`, `samma-api`, `samma-bridge`, `samma-scanner` | ServiceAccount names, see [RBAC](#rbac) |
@@ -1005,13 +1050,14 @@ kubectl delete crd scanner.samma.io scanreports.samma.io   # Helm leaves CRDs in
 | `scanners.runAsUser` | `1000` | uid of scanner containers |
 | `hooks.preDeleteCleanup` | `true` | Pre-delete hook that removes every Scanner on uninstall |
 | `nats.auth.enabled` | `true` | NATS users with publish-only and subscribe-only rights, see [NATS authentication](#nats-authentication) |
-| `nats.existingSecret` | `""` | Your own Secret with `scanner-password` and `bridge-password` |
+| `nats.existingSecret` | `""` | Your own Secret with `scanner-password` and `bridge-password`; required with `nats.enabled=false` while `nats.auth.enabled` is on |
 | `nats.auth.scannerPassword`, `nats.auth.bridgePassword` | `""` | Fixed passwords; empty means kept from the cluster or generated |
 | `nats.monitoring` | `false` | Serves the NATS HTTP monitoring endpoint on 8222: the server config's `http` line, the container port, the Service port and the `samma-nats` policy entry follow this switch |
 | `bridge.scanReports` | `true` | Write ScanReport objects, see [Scan reports](#scan-reports) |
 | `bridge.storeInTimescaleDB` | `true` | Insert every message into TimescaleDB (needs `timescaledb.enabled`) |
 | `networkPolicies.enabled` | `true` | NetworkPolicies for NATS, the API, the bridge and scan pods, see [Network policies](#network-policies) |
 | `networkPolicies.apiServer.ports`, `.cidrs` | `[443, 6443]`, `[]` | How the bridge may reach the API server |
+| `networkPolicies.externalNats.ports`, `.to` | `[4222]`, `[]` | With `nats.enabled=false`: egress of the bridge and scan pods to the external NATS, see [External NATS](#external-nats) |
 | `networkPolicies.apiClients` | `[]` | Namespace names (matched via `kubernetes.io/metadata.name`) whose pods may reach the API on 8080; the dashboard's namespace must be listed or its calls are dropped. See [Network policies](#network-policies) |
 
 ---

@@ -244,6 +244,16 @@ class ScannerEnvTests(unittest.TestCase):
         self.assertEqual(env["NATS_ENABLED"], "True")
         self.assertTrue(all(isinstance(v, str) for v in env.values()))
 
+    def test_nats_comes_from_the_operator_never_from_the_scanner(self):
+        # operator#2: the NATS URL and subject are chart values. A Scanner
+        # spec naming them (in any spelling) changes nothing.
+        spec = {"NATS_URL": "nats://evil.example:4222", "nats_url": "nats://evil.example:4222",
+                "NATS_SUBJECT": "other", "nats_subject": "other", "natsUrl": "nats://evil.example:4222"}
+        env = jobspec.scanner_env(spec, dict(self.DEFAULTS, NATS_URL="nats://nats.external.example:4222"))
+        self.assertEqual(env["NATS_URL"], "nats://nats.external.example:4222")
+        self.assertEqual(env["NATS_SUBJECT"], "samma-io.scan")
+        self.assertEqual(set(env), {"NATS_URL", "NATS_ENABLED", "NATS_SUBJECT"})
+
     def test_elasticsearch_default(self):
         self.assertEqual(jobspec.scanner_env({"elasticsearch": ""}, self.DEFAULTS)["ELASTICSEARCH"], "elasticsearch")
         self.assertEqual(jobspec.scanner_env({"elasticsearch": "es.example"}, self.DEFAULTS)["ELASTICSEARCH"], "es.example")
