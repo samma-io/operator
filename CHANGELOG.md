@@ -5,7 +5,7 @@ A release is a tag `v<version>` on `main`. Pushing it runs
 `oci://ghcr.io/samma-io/charts/samma-operator` and the images to
 `ghcr.io/samma-io/samma-{operator,api,bridge}` (README, "Releases").
 
-## Unreleased
+## 0.2.6
 
 - `nats.enabled` (default `true`) gates the bundled NATS: its Deployment,
   Service, `nats-config` ConfigMap, `samma-nats-auth` Secret and the
@@ -15,8 +15,8 @@ A release is a tag `v<version>` on `main`. Pushing it runs
   bridge passwords that NATS accepts. `networkPolicies.externalNats` opens
   the bridge's and the scanners' egress to it (README, "External NATS").
   Renders with the defaults are unchanged (operator#2).
-- nmap and nikto move to the rebuilt images `ghcr.io/samma-io/nmap:sha-c767f51`
-  and `ghcr.io/samma-io/nikto:sha-bb12955` (no shell, no sudo, uid 1000). The
+- nmap and nikto move to the rebuilt images `ghcr.io/samma-io/nmap:sha-6e0042c`
+  and `ghcr.io/samma-io/nikto:sha-362c174` (no shell, no sudo, uid 1000). The
   `sammascanner/*:v0.2` images produced no results under the 0.2.x pod
   security context, since uid 1000 had no sudoers entry. The chart pins them
   through the new `scanners.classicTags`, rendered as
@@ -24,9 +24,9 @@ A release is a tag `v<version>` on `main`. Pushing it runs
   images (`scanners.imagePrefix`, `scanners.imageTag` and `scanners.images`
   still apply); the raw manifest carries the same two variables.
 - nikto runs with `allowPrivilegeEscalation: false`. nmap keeps it only for
-  `scanners.nmapRawSockets=true`, which is broken with the new image until
-  samma-io/nmap#6; the default (unprivileged) mode works without sudo
-  (operator#38).
+  `scanners.nmapRawSockets=true`, where the image's NET_RAW-capable
+  `nmap-raw` copy needs it (samma-io/nmap#6); the default (unprivileged) mode
+  works without sudo (operator#38).
 
 ## 0.2.5
 

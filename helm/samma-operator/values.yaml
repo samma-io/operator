@@ -82,8 +82,8 @@ scanners:
   # builds the operator was tested with. tsunami and base keep the defaults
   # in operator/code/jobspec.py.
   classicTags:
-    nikto: sha-bb12955
-    nmap: sha-c767f51
+    nikto: sha-362c174
+    nmap: sha-6e0042c
   # imagePrefix replaces the registry and organisation of every scanner
   # image, keeping the image's base name (a mirror of the detect images
   # becomes <imagePrefix>/detect-dns-scanner:<imageTag, else detectTag>;
@@ -121,7 +121,8 @@ scanners:
   # true adds the NET_RAW capability to the nmap containers (SYN scans).
   # false keeps every scanner at drop ALL and asks nmap for connect scans
   # through NMAP_UNPRIVILEGED, which the ghcr.io/samma-io/nmap image honours.
-  # true does not work with that image yet (samma-io/nmap#6).
+  # true runs the image's NET_RAW-capable nmap copy (file capability), which
+  # needs allowPrivilegeEscalation; the chart keeps it for nmap only.
   nmapRawSockets: false
   # The uid scanner containers run as. The samma images create their user
   # with useradd, which gives uid 1000.

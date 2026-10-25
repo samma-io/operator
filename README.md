@@ -88,8 +88,8 @@ apply to them too). tsunami keeps the default built into `operator/code/jobspec.
 
 | Scanner | Image | Templates |
 |---|---|---|
-| `nikto` | `ghcr.io/samma-io/nikto:sha-bb12955` | none |
-| `nmap` | `ghcr.io/samma-io/nmap:sha-c767f51` | `port`, `http`, `tls` |
+| `nikto` | `ghcr.io/samma-io/nikto:sha-362c174` | none |
+| `nmap` | `ghcr.io/samma-io/nmap:sha-6e0042c` | `port`, `http`, `tls` |
 | `tsunami` | `sammascanner/tsunami:v0.1` | none |
 
 ---
@@ -308,15 +308,15 @@ Scanner pods run under the `samma-scanner` ServiceAccount, which has no rights, 
 - requests and limits from `scanners.resources`,
 - `allowPrivilegeEscalation: false`, except for `nmap`. Its default mode no longer needs it with
   the `ghcr.io/samma-io/nmap` image, which runs nmap directly; it stays only for raw-sockets mode
-  (below), which is broken with that image until
-  [samma-io/nmap#6](https://github.com/samma-io/nmap/issues/6). nikto, the detect scanners and
+  (below), whose NET_RAW file capability needs it. nikto, the detect scanners and
   tsunami run without it.
 
 nmap SYN scans need raw sockets. With `scanners.nmapRawSockets=false` (the default) no capability
 is added and the nmap containers get `NMAP_UNPRIVILEGED=1`, which nmap reads itself and which makes
 it use connect scans; the `ghcr.io/samma-io/nmap` image honours it. With `true` the nmap
-containers get `NET_RAW` and `NMAP_PRIVILEGED=1`; that mode does not work with the current nmap
-image yet (samma-io/nmap#6). Only nmap ever receives the capability.
+containers get `NET_RAW` and `NMAP_PRIVILEGED=1`, and the image runs its `nmap-raw` copy, which
+carries the NET_RAW file capability (granted only without no_new_privs, so nmap keeps
+`allowPrivilegeEscalation`). Only nmap ever receives the capability.
 
 The legacy `base` scanner keeps its filebeat sidecar; it is the only multi-container scanner. The
 sidecar mounts the `filebeat` and `live` ConfigMaps, which the operator creates at startup only
@@ -1046,7 +1046,7 @@ kubectl delete crd scanner.samma.io scanreports.samma.io   # Helm leaves CRDs in
 | `nodeSelector` | `kubernetes.io/arch: amd64` | Node selector for all pods |
 | `serviceAccounts.operator` / `api` / `bridge` / `scanner` | `samma-operator`, `samma-api`, `samma-bridge`, `samma-scanner` | ServiceAccount names, see [RBAC](#rbac) |
 | `scanners.detectTag` | `2.0.2` | Tag of every detect scanner image, see [Scanner types](#scanner-types) |
-| `scanners.classicTags` | `nikto: sha-bb12955`, `nmap: sha-c767f51` | Tags of the nmap and nikto images, see [Scanner types](#scanner-types) |
+| `scanners.classicTags` | `nikto: sha-362c174`, `nmap: sha-6e0042c` | Tags of the nmap and nikto images, see [Scanner types](#scanner-types) |
 | `scanners.imagePrefix`, `scanners.imageTag`, `scanners.images` | `""`, `""`, `{}` | Mirror and per-scanner image references, see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs) |
 | `scanners.pullPolicy` | `IfNotPresent` | `imagePullPolicy` of scanner containers |
 | `scanners.resources` | 100m/128Mi requests, 1/512Mi limits | Resources of every scanner container |
