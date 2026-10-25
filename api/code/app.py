@@ -1,4 +1,5 @@
 from flask import Flask, render_template, request
+import hmac
 import ipaddress
 import re
 import yaml
@@ -75,6 +76,23 @@ elasticsearch = os.getenv('ELASTICSEARCH' , 'true')
 samma_io_api_url = os.getenv('SAMMA_IO_API_URL', '')
 samma_io_api_token = os.getenv('SAMMA_IO_API_TOKEN', '')
 samma_io_profile_id = os.getenv('SAMMA_IO_PROFILE_ID', '')
+samma_api_token = os.getenv('SAMMA_API_TOKEN', '')
+if not samma_api_token:
+    raise SystemExit('SAMMA_API_TOKEN is required: every API route needs an inbound bearer token, refusing to start without it')
+
+_exempt_paths = frozenset(('/health', '/ready', '/metrics'))
+
+
+@app.before_request
+def require_bearer_token():
+    if request.path in _exempt_paths:
+        return
+    header = request.headers.get('Authorization', '')
+    if not header.startswith('Bearer '):
+        return {'error': 'unauthorized'}, 401
+    candidate = header[len('Bearer '):]
+    if not hmac.compare_digest(candidate.encode(), samma_api_token.encode()):
+        return {'error': 'unauthorized'}, 401
 
 
 def post_target_to_api(target, target_id):

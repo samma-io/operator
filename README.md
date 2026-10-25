@@ -547,6 +547,10 @@ Once it has a token:
 These map to the `SAMMA_IO_API_URL`, `SAMMA_IO_API_TOKEN` and `SAMMA_IO_PROFILE_ID`
 [environment variables](#environment-variables).
 
+Note the difference between the two tokens: `SAMMA_IO_API_TOKEN` is outbound — it authenticates
+this operator to samma.io — while `SAMMA_API_TOKEN` is inbound — it is the bearer token callers of
+this operator's own REST API must send, and the API exits at startup without one.
+
 ---
 
 ## Scanner profiles
@@ -576,6 +580,10 @@ kubectl patch configmap scanner-profiles -n samma-io --type merge \
 ## API Reference
 
 Base URL (inside cluster): `http://api.samma-io.svc:8080`
+
+All endpoints except `GET /health`, `GET /ready` and `GET /metrics` require the header
+`Authorization: Bearer $SAMMA_API_TOKEN` (see [Environment variables](#environment-variables));
+a missing, wrongly scoped or wrong token gets `401 {"error": "unauthorized"}`.
 
 For local access, port-forward first:
 ```bash
@@ -609,6 +617,7 @@ PUT /target
 Minimal request:
 ```bash
 curl -X PUT http://localhost:8080/target \
+  -H 'Authorization: Bearer $SAMMA_API_TOKEN' \
   -H 'Content-Type: application/json' \
   -d '{
     "target": "www.example.com",
@@ -619,6 +628,7 @@ curl -X PUT http://localhost:8080/target \
 Full request with all options:
 ```bash
 curl -X PUT http://localhost:8080/target \
+  -H 'Authorization: Bearer $SAMMA_API_TOKEN' \
   -H 'Content-Type: application/json' \
   -d '{
     "target": "www.example.com",
@@ -667,7 +677,7 @@ GET /target
 ```
 
 ```bash
-curl http://localhost:8080/target
+curl -H 'Authorization: Bearer $SAMMA_API_TOKEN' http://localhost:8080/target
 ```
 
 Response:
@@ -702,6 +712,7 @@ DELETE /target
 
 ```bash
 curl -X DELETE http://localhost:8080/target \
+  -H 'Authorization: Bearer $SAMMA_API_TOKEN' \
   -H 'Content-Type: application/json' \
   -d '{"target": "www.example.com"}'
 ```
@@ -812,6 +823,10 @@ curl -X DELETE http://localhost:8080/scanner \
 ### API
 
 Same env vars as operator, plus the external API vars above.
+
+| Variable | Default | Description |
+|---|---|---|
+| `SAMMA_API_TOKEN` | — | Required. Inbound bearer token for the API itself: every endpoint except `GET /health`, `GET /ready` and `GET /metrics` must send `Authorization: Bearer <token>` and receives `401 {"error": "unauthorized"}` otherwise. The process exits at startup when the variable is unset or empty. Distinct from `SAMMA_IO_API_TOKEN`, the outbound token the API uses when posting targets to samma.io. |
 
 ### Bridge
 
