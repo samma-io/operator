@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS scan_results (
     raw        JSONB
 );
 SELECT create_hypertable('scan_results', 'time', if_not_exists => TRUE);
+-- Per-target "latest results" lookups (app /api/v1, MCP server) filter on
+-- samma_id and order by time; without this they scan every chunk.
+CREATE INDEX IF NOT EXISTS scan_results_samma_id_time_idx ON scan_results (samma_id, time DESC);
 """
 
 CREATE_READER_ROLE = """
