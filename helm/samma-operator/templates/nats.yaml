@@ -1,4 +1,7 @@
 {{- include "samma.consentGate" . -}}
+{{- /* The bundled NATS. nats.enabled=false leaves it out and everything
+connects to config.natsUrl instead (README, "External NATS"). */ -}}
+{{- if .Values.nats.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -83,3 +86,4 @@ spec:
       targetPort: 8222
     {{- end }}
   type: ClusterIP
+{{- end }}

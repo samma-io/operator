@@ -65,10 +65,9 @@ scanners:
   # The detect scanners (github.com/samma-io/detect) are released together,
   # so one tag covers all of them: ghcr.io/samma-io/detect-<name>:<detectTag>.
   # This is the detect release the operator was tested with.
-  detectTag: "2.0.0"
+  detectTag: "2.0.2"
   # The scanners detectTag applies to (the operator's own table has the same
-  # names). The classic images (nmap, nikto, tsunami) keep the defaults in
-  # operator/code/jobspec.py until they are rebuilt.
+  # names).
   detectScanners:
     - dns-scanner
     - http-headers-scanner
@@ -78,10 +77,17 @@ scanners:
     - tls-scanner
     - traceroute-scanner
     - whois-scanner
+  # The rebuilt classic images (github.com/samma-io/nmap and samma-io/nikto),
+  # each released on its own: ghcr.io/samma-io/<name>:<tag>. These are the
+  # builds the operator was tested with. tsunami and base keep the defaults
+  # in operator/code/jobspec.py.
+  classicTags:
+    nikto: sha-362c174
+    nmap: sha-6e0042c
   # imagePrefix replaces the registry and organisation of every scanner
   # image, keeping the image's base name (a mirror of the detect images
-  # becomes <imagePrefix>/detect-dns-scanner:<imageTag, else detectTag>; a
-  # classic image becomes <imagePrefix>/nmap:<imageTag, else its default tag>).
+  # becomes <imagePrefix>/detect-dns-scanner:<imageTag, else detectTag>;
+  # nmap becomes <imagePrefix>/nmap:<imageTag, else classicTags.nmap>).
   imagePrefix: ""
   imageTag: ""
   # imagePullPolicy for scanner containers; empty keeps the Kubernetes default.
@@ -89,7 +95,7 @@ scanners:
   # A full reference for one scanner, with a tag or a digest. Wins over
   # everything above for that scanner.
   images: {}
-  #  nmap: ghcr.io/samma-io/nmap:v0.3
+  #  nmap: ghcr.io/samma-io/nmap@sha256:0123abcd...
   #  dns-scanner: ghcr.io/samma-io/detect-dns-scanner@sha256:0123abcd...
   # The legacy base scanner ships its files with a filebeat sidecar that
   # mounts the filebeat and live ConfigMaps. true creates them at startup;
@@ -114,7 +120,9 @@ scanners:
   ttlSecondsAfterFinished: 3600
   # true adds the NET_RAW capability to the nmap containers (SYN scans).
   # false keeps every scanner at drop ALL and asks nmap for connect scans
-  # through NMAP_UNPRIVILEGED; the nmap image has to honour that.
+  # through NMAP_UNPRIVILEGED, which the ghcr.io/samma-io/nmap image honours.
+  # true runs the image's NET_RAW-capable nmap copy (file capability), which
+  # needs allowPrivilegeEscalation; the chart keeps it for nmap only.
   nmapRawSockets: false
   # The uid scanner containers run as. The samma images create their user
   # with useradd, which gives uid 1000.
@@ -153,8 +161,17 @@ api:
   token: ""
   existingSecret: ""
 
-# NATS message broker (README, "NATS authentication")
+# NATS message broker (README, "NATS authentication", "External NATS")
 nats:
+  # Deploy the bundled NATS (Deployment, Service, the nats-config ConfigMap,
+  # the samma-nats-auth Secret and the samma-nats NetworkPolicy). false
+  # deploys none of them: the operator, the bridge and every scanner pod
+  # connect to config.natsUrl, a NATS you run, which must accept publishes
+  # from nats.auth.scannerUser and subscriptions from nats.auth.bridgeUser
+  # on config.natsSubject and <natsSubject>.> with the passwords in
+  # nats.existingSecret (required then), or take anonymous connections with
+  # nats.auth.enabled=false. Set networkPolicies.externalNats too.
+  enabled: true
   image: nats
   tag: "2"
   digest: "sha256:023a08c46caa5aff878fb86841187bebfdad9a6e3c552ba5c1a1e18938bbf88a"
@@ -215,6 +232,18 @@ networkPolicies:
   # read scan_results; same for any Grafana namespace. Empty allows only
   # the bridge pod (in the release namespace).
   timescaledbClients: []
+  # With nats.enabled=false: how the bridge and the scanner pods reach the
+  # external NATS at config.natsUrl. A NetworkPolicy cannot name a host, so
+  # list its address or its pods as NetworkPolicyPeers, for example
+  #   to:
+  #     - ipBlock: {cidr: 192.0.2.10/32}
+  #     - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: nats}}
+  #       podSelector: {matchLabels: {app.kubernetes.io/name: nats}}
+  # Empty allows the ports below to any address, private ones included.
+  # Ignored while nats.enabled is true (the bundled NATS pod is selected).
+  externalNats:
+    ports: [4222]
+    to: []
 
 # TimescaleDB: scan results storage for Grafana. false installs no database
 # and no PVC; the bridge then writes ScanReports only (bridge.storeInTimescaleDB
@@ -276,7 +305,11 @@ config:
   sammaIoTags: "['scanner']"
   sammaIoJson: "{}"
   writeToFile: "true"
-  # NATS
+  # NATS. The operator hands natsUrl and natsSubject to every scanner Job
+  # and CronJob (scanners publish on <natsSubject>.<scanner>) and the bridge
+  # subscribes there. They come from these values only, never from a
+  # Scanner or a target. The default is the bundled NATS's Service; with
+  # nats.enabled=false point it at your own NATS.
   natsUrl: "nats://nats:4222"
   natsEnabled: "True"
   natsSubject: "samma-io.scan"

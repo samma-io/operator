@@ -64,29 +64,32 @@ There are two scanner families:
 directly to NATS in schema v2, so they have [ScanReports](#scan-reports).
 
 The detect scanners are released together, and the chart pins all of them to one tag,
-`scanners.detectTag` (default `2.0.0`, the detect release this operator was tested with). Point
+`scanners.detectTag` (default `2.0.2`, the detect release this operator was tested with). Point
 them at a mirror with `scanners.imagePrefix` (and `scanners.imageTag`), or pin one scanner to a
 tag or a digest with `scanners.images.<scanner>` (see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs)).
 
 | Scanner | Image |
 |---|---|
-| `port-scanner` | `ghcr.io/samma-io/detect-port-scanner:2.0.0` |
-| `dns-scanner` | `ghcr.io/samma-io/detect-dns-scanner:2.0.0` |
-| `http-headers-scanner` | `ghcr.io/samma-io/detect-http-headers-scanner:2.0.0` |
-| `tls-scanner` | `ghcr.io/samma-io/detect-tls-scanner:2.0.0` |
-| `http-redirect-scanner` | `ghcr.io/samma-io/detect-http-redirect-scanner:2.0.0` |
-| `traceroute-scanner` | `ghcr.io/samma-io/detect-traceroute-scanner:2.0.0` |
-| `ssh-banner-scanner` | `ghcr.io/samma-io/detect-ssh-banner-scanner:2.0.0` |
-| `whois-scanner` | `ghcr.io/samma-io/detect-whois-scanner:2.0.0` |
+| `port-scanner` | `ghcr.io/samma-io/detect-port-scanner:2.0.2` |
+| `dns-scanner` | `ghcr.io/samma-io/detect-dns-scanner:2.0.2` |
+| `http-headers-scanner` | `ghcr.io/samma-io/detect-http-headers-scanner:2.0.2` |
+| `tls-scanner` | `ghcr.io/samma-io/detect-tls-scanner:2.0.2` |
+| `http-redirect-scanner` | `ghcr.io/samma-io/detect-http-redirect-scanner:2.0.2` |
+| `traceroute-scanner` | `ghcr.io/samma-io/detect-traceroute-scanner:2.0.2` |
+| `ssh-banner-scanner` | `ghcr.io/samma-io/detect-ssh-banner-scanner:2.0.2` |
+| `whois-scanner` | `ghcr.io/samma-io/detect-whois-scanner:2.0.2` |
 
-**classic**: the traditional scanners (`sammascanner/*`). Single container, NATS vars passed
-through env. Their image references are the defaults built into `operator/code/jobspec.py`; they
-move to rebuilt, pinned images in a later release.
+**classic**: the traditional scanners. Single container, NATS vars passed through env. nmap and
+nikto are rebuilt images from [samma-io/nmap](https://github.com/samma-io/nmap) and
+[samma-io/nikto](https://github.com/samma-io/nikto) (no shell, no sudo, uid 1000 `samma`), each
+released on its own; the chart pins each one to its tag in `scanners.classicTags` the same way
+as the detect images (`scanners.imagePrefix`, `scanners.imageTag` and `scanners.images.<scanner>`
+apply to them too). tsunami keeps the default built into `operator/code/jobspec.py`.
 
 | Scanner | Image | Templates |
 |---|---|---|
-| `nikto` | `sammascanner/nikto:v0.2` | none |
-| `nmap` | `sammascanner/nmap:v0.2` | `port`, `http`, `tls` |
+| `nikto` | `ghcr.io/samma-io/nikto:sha-362c174` | none |
+| `nmap` | `ghcr.io/samma-io/nmap:sha-6e0042c` | `port`, `http`, `tls` |
 | `tsunami` | `sammascanner/tsunami:v0.1` | none |
 
 ---
@@ -303,15 +306,17 @@ Scanner pods run under the `samma-scanner` ServiceAccount, which has no rights, 
 - `capabilities: drop: [ALL]`,
 - `readOnlyRootFilesystem: true` with `emptyDir` volumes at `/out` and `/tmp`,
 - requests and limits from `scanners.resources`,
-- `allowPrivilegeEscalation: false`, except for `nikto` and `nmap`: those images run the tool
-  through `sudo`, which needs privilege escalation. The flag goes away once the images run the tool
-  directly. The detect scanners and tsunami do not get it.
+- `allowPrivilegeEscalation: false`, except for `nmap`. Its default mode no longer needs it with
+  the `ghcr.io/samma-io/nmap` image, which runs nmap directly; it stays only for raw-sockets mode
+  (below), whose NET_RAW file capability needs it. nikto, the detect scanners and
+  tsunami run without it.
 
 nmap SYN scans need raw sockets. With `scanners.nmapRawSockets=false` (the default) no capability
 is added and the nmap containers get `NMAP_UNPRIVILEGED=1`, which nmap reads itself and which makes
-it use connect scans; the nmap image has to pass that through (and use `-sT` for the port scan).
-With `true` the nmap containers get `NET_RAW` and `NMAP_PRIVILEGED=1`, which is today's behaviour.
-Only nmap ever receives the capability.
+it use connect scans; the `ghcr.io/samma-io/nmap` image honours it. With `true` the nmap
+containers get `NET_RAW` and `NMAP_PRIVILEGED=1`, and the image runs its `nmap-raw` copy, which
+carries the NET_RAW file capability (granted only without no_new_privs, so nmap keeps
+`allowPrivilegeEscalation`). Only nmap ever receives the capability.
 
 The legacy `base` scanner keeps its filebeat sidecar; it is the only multi-container scanner. The
 sidecar mounts the `filebeat` and `live` ConfigMaps, which the operator creates at startup only
@@ -325,7 +330,7 @@ default) `pod-security.kubernetes.io/enforce: baseline` and
 namespaces, host paths and added capabilities (beyond `NET_BIND_SERVICE`) — every operator, API,
 bridge, NATS and scanner pod complies. Restricted warn only logs violations, and the API, NATS and
 TimescaleDB pods run without a full restricted securityContext, so expect warnings for them (and
-for nikto and nmap, which keep `allowPrivilegeEscalation` for their `sudo`); they still run. A
+for nmap, which keeps `allowPrivilegeEscalation`); they still run. A
 namespace you create yourself needs the same labels applied by hand. One trade-off to know:
 `scanners.nmapRawSockets=true` adds `NET_RAW`, which baseline enforce rejects — such nmap pods are
 not scheduled until you relax the namespace's enforce label.
@@ -513,6 +518,49 @@ manifest ships the Secret with placeholder values that you must replace before a
 `nats.auth.enabled=false` restores the old unauthenticated NATS: no Secret, no credentials in any
 pod. The operator passes credentials to scanner pods only when `SAMMA_NATS_SECRET` names a Secret.
 
+### External NATS
+
+The NATS URL and subject come from the chart values `config.natsUrl` and `config.natsSubject`
+only: the operator reads `NATS_URL` and `NATS_SUBJECT` from its own environment and hands them to
+every scanner Job and CronJob, and the bridge reads the same two values. No Scanner field, Ingress
+annotation or target can change them.
+
+`nats.enabled=false` leaves the bundled NATS out: its Deployment, Service, the `nats-config`
+ConfigMap, the `samma-nats-auth` Secret and the `samma-nats` NetworkPolicy. The operator, the
+bridge and the scanner pods then connect to `config.natsUrl`, which you point at a NATS you run.
+That NATS has to accept, on `config.natsSubject` and `<natsSubject>.>`:
+
+- **With `nats.auth.enabled=true`** (the default): publishes from the user `nats.auth.scannerUser`
+  (`scanner`) and subscriptions from `nats.auth.bridgeUser` (`bridge`), with the passwords in the
+  Secret named by `nats.existingSecret` (keys `scanner-password` and `bridge-password`, URL-safe).
+  `nats.existingSecret` is required then: the chart renders no Secret for an external NATS and
+  refuses to render without one rather than connect anonymously. `SAMMA_NATS_SECRET` is that
+  Secret, so scanner pods get `NATS_USER`, `NATS_PASSWORD` and a `NATS_URL` with credentials as
+  above, and the bridge gets its user and password from the same Secret. Give the two users the
+  same publish-only and subscribe-only rights as the bundled config (`templates/nats-auth.yaml`).
+- **With `nats.auth.enabled=false`**: anonymous connections. `SAMMA_NATS_SECRET` is empty and no
+  pod gets credentials.
+
+The bridge also accepts a credentials file (`NATS_CREDS`), which the chart does not mount.
+
+With `networkPolicies.enabled`, the bridge and scanner policies allow egress to the external NATS
+through `networkPolicies.externalNats`: its `ports` (`[4222]`) to the NetworkPolicy peers in `to`.
+A NetworkPolicy cannot name a host, so list the NATS server's address (`ipBlock`) or, for a NATS in
+the same cluster, its namespace and pods (`namespaceSelector` and `podSelector`). While `to` is
+empty the ports are allowed to any address, private ones included; set it.
+
+```yaml
+nats:
+  enabled: false
+  existingSecret: my-nats-passwords
+config:
+  natsUrl: nats://<your NATS>:4222
+networkPolicies:
+  externalNats:
+    to:
+      - ipBlock: {cidr: <its address>/32}
+```
+
 ---
 
 ## Network policies
@@ -522,10 +570,10 @@ manifest):
 
 | Policy | Selects | Allows |
 |---|---|---|
-| `samma-nats` | the NATS pod | ingress on 4222 from pods in the release namespace only; on 8222 too while `nats.monitoring` is true |
+| `samma-nats` | the NATS pod (while `nats.enabled` is on) | ingress on 4222 from pods in the release namespace only; on 8222 too while `nats.monitoring` is true |
 | `samma-api` | the API pod | ingress on 8080 from pods in the release namespace and from the namespaces in `networkPolicies.apiClients` only |
-| `samma-bridge` | the bridge | egress to NATS, TimescaleDB (while `bridge.storeInTimescaleDB` is on), DNS, and the Kubernetes API server |
-| `samma-scanners` | scan pods (`app.kubernetes.io/managed-by=samma-operator`, `samma.io/role=scanner`) | egress to DNS, NATS and public addresses only |
+| `samma-bridge` | the bridge | egress to NATS (the external one through `networkPolicies.externalNats` while `nats.enabled` is off, see [External NATS](#external-nats)), TimescaleDB (while `bridge.storeInTimescaleDB` is on), DNS, and the Kubernetes API server |
+| `samma-scanners` | scan pods (`app.kubernetes.io/managed-by=samma-operator`, `samma.io/role=scanner`) | egress to DNS, NATS (likewise) and public addresses only |
 | `samma-timescaledb` | the TimescaleDB pod (while `timescaledb.enabled` is on) | ingress on 5432 from the bridge and from the namespaces in `networkPolicies.timescaledbClients` only |
 
 "Public addresses only" means `0.0.0.0/0` except `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
@@ -907,7 +955,8 @@ your provider's terms of service. The chart will not render the operator until y
 
 The chart is published to `oci://ghcr.io/samma-io/charts/samma-operator`. Every release pins its
 own images: the chart's `appVersion` is the tag of the operator, API and bridge images, and
-`scanners.detectTag` is the tag of the detect scanner images.
+`scanners.detectTag` is the tag of the detect scanner images, `scanners.classicTags` those of nmap
+and nikto.
 
 ```bash
 helm install samma oci://ghcr.io/samma-io/charts/samma-operator --version 0.2.0 \
@@ -982,6 +1031,7 @@ kubectl delete crd scanner.samma.io scanreports.samma.io   # Helm leaves CRDs in
 | `api.enabled` | `true` | Deploy the REST API |
 | `api.image`, `.tag`, `.digest`, `.pullPolicy` | `ghcr.io/samma-io/samma-api`, `""`, `""`, `IfNotPresent` | API image |
 | `bridge.image`, `.tag`, `.digest`, `.pullPolicy` | `ghcr.io/samma-io/samma-bridge`, `""`, `""`, `IfNotPresent` | Bridge image |
+| `nats.enabled` | `true` | Deploy the bundled NATS; `false` uses the NATS at `config.natsUrl`, see [External NATS](#external-nats) |
 | `nats.image`, `.tag`, `.digest`, `.pullPolicy` | `nats`, `2`, `""`, `IfNotPresent` | NATS image |
 | `timescaledb.enabled` | `true` | Deploy TimescaleDB and its PVC |
 | `timescaledb.password`, `timescaledb.existingSecret` | `""`, `""` | One of the two is required when enabled: the password (stored in the Secret `samma-timescaledb`) or your own Secret with the key `password`. No default |
@@ -990,11 +1040,13 @@ kubectl delete crd scanner.samma.io scanreports.samma.io   # Helm leaves CRDs in
 | `config.sammaIoId` | `""` | Default asset ID attached to all scans |
 | `config.sammaIoTags` | `['scanner']` | Default tags |
 | `config.apiToken` | `""` | External samma.io API token |
-| `config.natsUrl` | `nats://nats:4222` | NATS server URL |
+| `config.natsUrl` | `nats://nats:4222` | NATS server URL for the operator's scanner Jobs and CronJobs and the bridge; required |
+| `config.natsSubject` | `samma-io.scan` | Base subject; scanners publish on `<natsSubject>.<scanner>` |
 | `config.allowPrivateTargets`, `config.allowUnmanagedTargets` | `"false"`, `"true"` | See [Target validation](#target-validation) |
 | `nodeSelector` | `kubernetes.io/arch: amd64` | Node selector for all pods |
 | `serviceAccounts.operator` / `api` / `bridge` / `scanner` | `samma-operator`, `samma-api`, `samma-bridge`, `samma-scanner` | ServiceAccount names, see [RBAC](#rbac) |
-| `scanners.detectTag` | `2.0.0` | Tag of every detect scanner image, see [Scanner types](#scanner-types) |
+| `scanners.detectTag` | `2.0.2` | Tag of every detect scanner image, see [Scanner types](#scanner-types) |
+| `scanners.classicTags` | `nikto: sha-362c174`, `nmap: sha-6e0042c` | Tags of the nmap and nikto images, see [Scanner types](#scanner-types) |
 | `scanners.imagePrefix`, `scanners.imageTag`, `scanners.images` | `""`, `""`, `{}` | Mirror and per-scanner image references, see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs) |
 | `scanners.pullPolicy` | `IfNotPresent` | `imagePullPolicy` of scanner containers |
 | `scanners.resources` | 100m/128Mi requests, 1/512Mi limits | Resources of every scanner container |
@@ -1005,13 +1057,14 @@ kubectl delete crd scanner.samma.io scanreports.samma.io   # Helm leaves CRDs in
 | `scanners.runAsUser` | `1000` | uid of scanner containers |
 | `hooks.preDeleteCleanup` | `true` | Pre-delete hook that removes every Scanner on uninstall |
 | `nats.auth.enabled` | `true` | NATS users with publish-only and subscribe-only rights, see [NATS authentication](#nats-authentication) |
-| `nats.existingSecret` | `""` | Your own Secret with `scanner-password` and `bridge-password` |
+| `nats.existingSecret` | `""` | Your own Secret with `scanner-password` and `bridge-password`; required with `nats.enabled=false` while `nats.auth.enabled` is on |
 | `nats.auth.scannerPassword`, `nats.auth.bridgePassword` | `""` | Fixed passwords; empty means kept from the cluster or generated |
 | `nats.monitoring` | `false` | Serves the NATS HTTP monitoring endpoint on 8222: the server config's `http` line, the container port, the Service port and the `samma-nats` policy entry follow this switch |
 | `bridge.scanReports` | `true` | Write ScanReport objects, see [Scan reports](#scan-reports) |
 | `bridge.storeInTimescaleDB` | `true` | Insert every message into TimescaleDB (needs `timescaledb.enabled`) |
 | `networkPolicies.enabled` | `true` | NetworkPolicies for NATS, the API, the bridge and scan pods, see [Network policies](#network-policies) |
 | `networkPolicies.apiServer.ports`, `.cidrs` | `[443, 6443]`, `[]` | How the bridge may reach the API server |
+| `networkPolicies.externalNats.ports`, `.to` | `[4222]`, `[]` | With `nats.enabled=false`: egress of the bridge and scan pods to the external NATS, see [External NATS](#external-nats) |
 | `networkPolicies.apiClients` | `[]` | Namespace names (matched via `kubernetes.io/metadata.name`) whose pods may reach the API on 8080; the dashboard's namespace must be listed or its calls are dropped. See [Network policies](#network-policies) |
 
 ---

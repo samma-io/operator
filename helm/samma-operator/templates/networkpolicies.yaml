@@ -4,7 +4,8 @@ Network policies (README, "Network policies"). They only take effect on a
 CNI that enforces NetworkPolicy; on one that does not, they are inert.
 
   samma-nats      NATS accepts connections only from pods in this namespace,
-                  and on 8222 only while nats.monitoring is true.
+                  and on 8222 only while nats.monitoring is true. Rendered
+                  with the bundled NATS only (nats.enabled).
   samma-api       the API accepts connections on 8080 only from pods in this
                   namespace and from the namespaces listed in the
                   networkPolicies.apiClients value.
@@ -18,7 +19,14 @@ CNI that enforces NetworkPolicy; on one that does not, they are inert.
   samma-timescaledb  TimescaleDB accepts ingress on 5432 only from the
                      bridge pod and from the namespaces listed in the
                      networkPolicies.timescaledbClients value.
+
+With nats.enabled=false, "NATS" in samma-bridge and samma-scanners is the
+external NATS at config.natsUrl: the ports in networkPolicies.externalNats
+to the peers in networkPolicies.externalNats.to, or to any address while
+that list is empty. A policy cannot name a host, so list the external
+NATS's address (ipBlock) or its pods (namespaceSelector/podSelector).
 */ -}}
+{{- if .Values.nats.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -41,6 +49,7 @@ spec:
           protocol: TCP
         {{- end }}
 ---
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -78,13 +87,7 @@ spec:
   policyTypes:
     - Egress
   egress:
-    - to:
-        - podSelector:
-            matchLabels:
-              app: nats
-      ports:
-        - port: 4222
-          protocol: TCP
+    {{- include "samma.natsEgressRule" . | trim | nindent 4 }}
     {{- if include "samma.storeInTimescaleDB" . }}
     - to:
         - podSelector:
@@ -132,13 +135,7 @@ spec:
           protocol: UDP
         - port: 53
           protocol: TCP
-    - to:
-        - podSelector:
-            matchLabels:
-              app: nats
-      ports:
-        - port: 4222
-          protocol: TCP
+    {{- include "samma.natsEgressRule" . | trim | nindent 4 }}
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
