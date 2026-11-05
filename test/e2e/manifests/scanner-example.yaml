@@ -1,0 +1,12 @@
+# A Scanner made by hand (no Ingress), passive like the Ingress one: the
+# server-side dry run of it is the control for the injection test, and it is
+# created for real just before helm uninstall so the pre-delete hook has a
+# Scanner, a Job and a CronJob to remove.
+apiVersion: samma.io/v1
+kind: Scanner
+metadata:
+  name: e2e-uninstall
+  namespace: samma-io
+spec:
+  target: example.com
+  scanners: ["dns-scanner"]

@@ -161,6 +161,7 @@ Open in VS Code → "Reopen in Container". Provides Python 3.12, kubectl, helm, 
 ### CI/CD (GitHub Actions)
 `.github/workflows/build.yaml`: runs the unit tests and `helm lint`, then builds the `operator/`, `api/` and `bridge/` images on push and PR to `main`. Pushes (push only, never from a PR) to `ghcr.io/<owner>/samma-operator`, `samma-api` and `samma-bridge` tagged with the git SHA and `latest`.
 `.github/workflows/release.yaml`: on tags `v*`, see "Releases (images and chart)" above.
+`.github/workflows/e2e.yaml`: on push and PR to `main`, builds the operator, bridge and API images from the checkout, imports them into a k3d cluster and runs `test/e2e/run.sh` (README in `test/e2e/`): install into `samma-io` enforcing Pod Security `restricted` (TimescaleDB off, NetworkPolicies on), a `dns-scanner` ScanReport with outcome `succeeded` from an Ingress for `example.com`, the CRD refusing target `a.com; id`, NATS refusing anonymous and wrong-password publishes, a Job made from a CronJob starting suspended and resumed by the queue, nothing left after the Ingress is deleted, and `helm uninstall` with its pre-delete hook removing a Scanner. Only ever scan `example.com` passively there. On failure `test/e2e/diagnostics.sh` prints the objects, events and logs. Run it locally only against a throwaway k3d cluster (`E2E_KUBE_CONTEXT`).
 
 ## Key Concepts
 
