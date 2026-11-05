@@ -64,20 +64,20 @@ There are two scanner families:
 directly to NATS in schema v2, so they have [ScanReports](#scan-reports).
 
 The detect scanners are released together, and the chart pins all of them to one tag,
-`scanners.detectTag` (default `2.0.2`, the detect release this operator was tested with). Point
+`scanners.detectTag` (default `2.0.3`, the detect release this operator was tested with). Point
 them at a mirror with `scanners.imagePrefix` (and `scanners.imageTag`), or pin one scanner to a
 tag or a digest with `scanners.images.<scanner>` (see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs)).
 
 | Scanner | Image |
 |---|---|
-| `port-scanner` | `ghcr.io/samma-io/detect-port-scanner:2.0.2` |
-| `dns-scanner` | `ghcr.io/samma-io/detect-dns-scanner:2.0.2` |
-| `http-headers-scanner` | `ghcr.io/samma-io/detect-http-headers-scanner:2.0.2` |
-| `tls-scanner` | `ghcr.io/samma-io/detect-tls-scanner:2.0.2` |
-| `http-redirect-scanner` | `ghcr.io/samma-io/detect-http-redirect-scanner:2.0.2` |
-| `traceroute-scanner` | `ghcr.io/samma-io/detect-traceroute-scanner:2.0.2` |
-| `ssh-banner-scanner` | `ghcr.io/samma-io/detect-ssh-banner-scanner:2.0.2` |
-| `whois-scanner` | `ghcr.io/samma-io/detect-whois-scanner:2.0.2` |
+| `port-scanner` | `ghcr.io/samma-io/detect-port-scanner:2.0.3` |
+| `dns-scanner` | `ghcr.io/samma-io/detect-dns-scanner:2.0.3` |
+| `http-headers-scanner` | `ghcr.io/samma-io/detect-http-headers-scanner:2.0.3` |
+| `tls-scanner` | `ghcr.io/samma-io/detect-tls-scanner:2.0.3` |
+| `http-redirect-scanner` | `ghcr.io/samma-io/detect-http-redirect-scanner:2.0.3` |
+| `traceroute-scanner` | `ghcr.io/samma-io/detect-traceroute-scanner:2.0.3` |
+| `ssh-banner-scanner` | `ghcr.io/samma-io/detect-ssh-banner-scanner:2.0.3` |
+| `whois-scanner` | `ghcr.io/samma-io/detect-whois-scanner:2.0.3` |
 
 **classic**: the traditional scanners. Single container, NATS vars passed through env. nmap and
 nikto are rebuilt images from [samma-io/nmap](https://github.com/samma-io/nmap) and
@@ -583,7 +583,7 @@ manifest):
 | `samma-nats` | the NATS pod (while `nats.enabled` is on) | ingress on 4222 from pods in the release namespace only; on 8222 too while `nats.monitoring` is true |
 | `samma-api` | the API pod | ingress on 8080 from pods in the release namespace and from the namespaces in `networkPolicies.apiClients` only |
 | `samma-bridge` | the bridge | egress to NATS (the external one through `networkPolicies.externalNats` while `nats.enabled` is off, see [External NATS](#external-nats)), TimescaleDB (while `bridge.storeInTimescaleDB` is on), DNS, and the Kubernetes API server |
-| `samma-scanners` | scan pods (`app.kubernetes.io/managed-by=samma-operator`, `samma.io/role=scanner`) | egress to DNS, NATS (likewise) and public addresses only |
+| `samma-scanners` | scan pods (`app.kubernetes.io/managed-by=samma-operator`, `samma.io/role=scanner`) | egress to DNS, NATS (likewise), public addresses, and the ingress controller pods in `networkPolicies.ingressControllers` on their serving ports |
 | `samma-timescaledb` | the TimescaleDB pod (while `timescaledb.enabled` is on) | ingress on 5432 from the bridge and from the namespaces in `networkPolicies.timescaledbClients` only |
 
 "Public addresses only" means `0.0.0.0/0` except `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
@@ -591,6 +591,33 @@ manifest):
 and `::1/128`. A scan pod therefore cannot be used to reach other pods, Services or nodes. When
 `config.allowPrivateTargets` is `"true"` (the same switch that lets a Scanner target a private
 address) the except lists are left out, and the scanners can reach the cluster network.
+
+The one private destination scan pods do reach is the cluster's own ingress controller, on its
+serving ports only (`networkPolicies.ingressControllers`). Most Ingresses are reached through a
+LoadBalancer Service, and when its address is a VIP (`status.loadBalancer.ingress[].ipMode` is
+`VIP` or unset: MetalLB, kube-vip, k3s ServiceLB and most cloud load balancers without PROXY
+protocol) kube-proxy does not send in-cluster traffic for that address to the load balancer. It
+hands it straight to the controller's pods. A scan of the cluster's own hostname therefore arrives
+at a private pod address, and without this rule the policy refuses it: the HTTP scanners fail with
+"Connection refused", and the port and SSH scanners report closed ports that are open. With
+`ipMode: Proxy` (Hetzner with PROXY protocol, for example) the traffic leaves through the load
+balancer and the public-addresses rule covers it.
+
+Each entry is a NetworkPolicyPeer plus `ports`; a port name matches the container port of that
+name on the destination pod, so a controller's metrics or dashboard port stays closed. The default
+covers Traefik (`app.kubernetes.io/name=traefik`, ports `web` and `websecure`) and ingress-nginx
+(`app.kubernetes.io/name=ingress-nginx`, ports `http` and `https`) in any namespace. Name your
+controller if it is labelled or its ports are named differently, for example:
+
+```yaml
+networkPolicies:
+  ingressControllers:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: haproxy}}
+      podSelector: {matchLabels: {app: haproxy-ingress}}
+      ports: [80, 443]
+```
+
+`[]` removes the rule. The chart refuses an entry without a selector or without ports.
 
 The API server is not a pod, so the bridge's policy reaches it by port: 443 and 6443 to any
 address by default (`networkPolicies.apiServer.ports`). Set `networkPolicies.apiServer.cidrs` to
@@ -1055,7 +1082,7 @@ kubectl delete crd scanner.samma.io scanreports.samma.io   # Helm leaves CRDs in
 | `config.allowPrivateTargets`, `config.allowUnmanagedTargets` | `"false"`, `"true"` | See [Target validation](#target-validation) |
 | `nodeSelector` | `kubernetes.io/arch: amd64` | Node selector for all pods |
 | `serviceAccounts.operator` / `api` / `bridge` / `scanner` | `samma-operator`, `samma-api`, `samma-bridge`, `samma-scanner` | ServiceAccount names, see [RBAC](#rbac) |
-| `scanners.detectTag` | `2.0.2` | Tag of every detect scanner image, see [Scanner types](#scanner-types) |
+| `scanners.detectTag` | `2.0.3` | Tag of every detect scanner image, see [Scanner types](#scanner-types) |
 | `scanners.classicTags` | `nikto: sha-362c174`, `nmap: sha-6e0042c` | Tags of the nmap and nikto images, see [Scanner types](#scanner-types) |
 | `scanners.imagePrefix`, `scanners.imageTag`, `scanners.images` | `""`, `""`, `{}` | Mirror and per-scanner image references, see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs) |
 | `scanners.pullPolicy` | `IfNotPresent` | `imagePullPolicy` of scanner containers |
@@ -1076,6 +1103,7 @@ kubectl delete crd scanner.samma.io scanreports.samma.io   # Helm leaves CRDs in
 | `networkPolicies.enabled` | `true` | NetworkPolicies for NATS, the API, the bridge and scan pods, see [Network policies](#network-policies) |
 | `networkPolicies.apiServer.ports`, `.cidrs` | `[443, 6443]`, `[]` | How the bridge may reach the API server |
 | `networkPolicies.externalNats.ports`, `.to` | `[4222]`, `[]` | With `nats.enabled=false`: egress of the bridge and scan pods to the external NATS, see [External NATS](#external-nats) |
+| `networkPolicies.ingressControllers` | Traefik (`web`, `websecure`) and ingress-nginx (`http`, `https`), any namespace | Ingress controller pods scan pods may reach on those ports; needed where the LoadBalancer address is a VIP. See [Network policies](#network-policies) |
 | `networkPolicies.apiClients` | `[]` | Namespace names (matched via `kubernetes.io/metadata.name`) whose pods may reach the API on 8080; the dashboard's namespace must be listed or its calls are dropped. See [Network policies](#network-policies) |
 
 ---

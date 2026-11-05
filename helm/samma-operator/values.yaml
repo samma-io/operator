@@ -65,7 +65,7 @@ scanners:
   # The detect scanners (github.com/samma-io/detect) are released together,
   # so one tag covers all of them: ghcr.io/samma-io/detect-<name>:<detectTag>.
   # This is the detect release the operator was tested with.
-  detectTag: "2.0.2"
+  detectTag: "2.0.3"
   # The scanners detectTag applies to (the operator's own table has the same
   # names).
   detectScanners:
@@ -250,6 +250,32 @@ networkPolicies:
   externalNats:
     ports: [4222]
     to: []
+  # Pods that serve this cluster's Ingresses, which scan pods may reach on
+  # the ports listed. Needed wherever the LoadBalancer address in front of
+  # the ingress controller is a VIP (status.loadBalancer.ingress[].ipMode
+  # "VIP", or no ipMode: MetalLB, kube-vip, k3s ServiceLB and most cloud
+  # load balancers without PROXY protocol). kube-proxy then delivers
+  # in-cluster traffic for that address straight to the controller's pods,
+  # so a scan of the cluster's own hostname arrives at a private pod address
+  # that the public-addresses rule refuses: the HTTP scanners fail and the
+  # port and SSH scanners report closed ports that are open.
+  # Each entry is a NetworkPolicyPeer (podSelector and/or namespaceSelector)
+  # plus ports; a port name matches the container port of that name on the
+  # destination pod, so only the serving ports open, never a metrics or
+  # dashboard port. The defaults match Traefik and ingress-nginx as their
+  # upstream charts label and name them, in any namespace. [] removes the
+  # rule.
+  ingressControllers:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: traefik
+      namespaceSelector: {}
+      ports: [web, websecure]
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+      namespaceSelector: {}
+      ports: [http, https]
 
 # TimescaleDB: scan results storage for Grafana. false installs no database
 # and no PVC; the bridge then writes ScanReports only (bridge.storeInTimescaleDB

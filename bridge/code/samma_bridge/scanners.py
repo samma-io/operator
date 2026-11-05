@@ -7,9 +7,14 @@ scan. The same list gives a report its owners (the Scanners with that
 target and scanner) and the Ingress labels to copy.
 
 The lister is injected (bridge.py passes the kubernetes client call) and
-the list is refreshed at most every ttl seconds. When a refresh fails the
-previous list stays in use; before the first successful list nothing
-matches.
+the list is refreshed at most every ttl seconds. A target the cached list
+lacks may belong to a Scanner created since that list (the operator creates
+a Scanner and its first Jobs together, so its first messages can arrive
+seconds later), so a miss re-lists once before the message is refused: at
+most once every miss_refresh_seconds, so a pod that floods NATS with
+unknown targets costs one list a second, not one per message. When a
+refresh fails the previous list stays in use; before the first successful
+list nothing matches.
 """
 
 import logging
@@ -39,13 +44,15 @@ def _spec_id(scanner_object):
 
 
 class ScannerIndex(object):
-    def __init__(self, lister, ttl_seconds=30, clock=None, logger=None):
+    def __init__(self, lister, ttl_seconds=30, clock=None, logger=None, miss_refresh_seconds=1.0):
         self.lister = lister
         self.ttl = float(ttl_seconds)
+        self.miss_interval = float(miss_refresh_seconds)
         self.clock = clock or time.monotonic
         self.log = logger or logging.getLogger("samma.bridge.scanners")
         self._by_target = {}
         self._loaded_at = None
+        self._missed_at = None
         self.loaded = False
 
     def refresh(self, now=None, force=False):
@@ -71,9 +78,28 @@ class ScannerIndex(object):
         self.loaded = True
         return True
 
-    def is_target(self, target):
+    def _refresh_on_miss(self):
+        """Re-list now, unless a miss already re-listed within
+        miss_interval. Returns True when it listed."""
+        if not self.loaded:
+            return False  # refresh() is already retrying on its own schedule
+        now = self.clock()
+        if self._missed_at is not None and now - self._missed_at < self.miss_interval:
+            return False
+        self._missed_at = now
+        self.refresh(now=now, force=True)
+        return True
+
+    def _known(self, target):
+        """The Scanners with this target, re-listing once on a miss."""
         self.refresh()
-        return target in self._by_target
+        items = self._by_target.get(target)
+        if not items and self._refresh_on_miss():
+            items = self._by_target.get(target)
+        return items or []
+
+    def is_target(self, target):
+        return bool(self._known(target))
 
     def matching(self, scanner, target):
         """The Scanners that have this target and run this scanner."""
@@ -96,7 +122,7 @@ class ScannerIndex(object):
         self.refresh()
         if not self.loaded:
             return False
-        for item in self._by_target.get(target, []):
+        for item in self._known(target):
             spec_id = _spec_id(item)
             if spec_id is None or spec_id == samma_io_id:
                 return True
