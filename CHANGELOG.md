@@ -5,6 +5,32 @@ A release is a tag `v<version>` on `main`. Pushing it runs
 `oci://ghcr.io/samma-io/charts/samma-operator` and the images to
 `ghcr.io/samma-io/samma-{operator,api,bridge}` (README, "Releases").
 
+## 0.2.8
+
+- Scan pods can reach the cluster's own ingress controller. Where the
+  LoadBalancer address in front of it is a VIP (`ipMode` `VIP` or unset:
+  MetalLB, kube-vip, k3s ServiceLB, most cloud load balancers without PROXY
+  protocol), kube-proxy delivers in-cluster traffic for that address straight
+  to the controller's pods. The `samma-scanners` policy refused those as
+  private addresses, so the HTTP scanners failed with "Connection refused" and
+  the port and SSH scanners reported open ports as closed. Scans that started
+  in the second before kube-router programmed the pod's policy got through,
+  which hid it. The new `networkPolicies.ingressControllers` value (default:
+  Traefik's `web`/`websecure` and ingress-nginx's `http`/`https` container
+  ports, in any namespace) opens exactly those pods and ports; every other
+  private address stays closed. Found on a k3s cluster behind a Hetzner load
+  balancer without PROXY protocol.
+- The bridge no longer drops the first scan of a new Scanner. It listed
+  Scanners at most every `SCANNER_CACHE_SECONDS` (30) and dropped a message
+  whose target was not in that list, so a Scanner created inside the window
+  lost its first scan for good and the next attempt was the scheduled run.
+  A target the cached list lacks now re-lists once before the message is
+  refused, at most once a second, so a pod that floods NATS with unknown
+  targets costs one list a second. Found by the k3d end-to-end test.
+- Detect scanners default to 2.0.3 (`scanners.detectTag`): a scanner waits up
+  to 10 seconds for its network before scanning, and an unroutable IPv6
+  address no longer hides the IPv4 answer.
+
 ## 0.2.7
 
 - `scanners.maxConcurrentScans` now holds for scheduled runs. With a limit

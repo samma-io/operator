@@ -46,6 +46,16 @@ jobs:
             --set nats.enabled=false --set nats.existingSecret=lint > /dev/null
           helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
             --set nats.enabled=false --set nats.auth.enabled=false > /dev/null
+          # No ingress controller rule, and a controller named by namespace with numeric ports.
+          helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
+            --set-json 'networkPolicies.ingressControllers=[]' > /dev/null
+          helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
+            --set-json 'networkPolicies.ingressControllers=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"haproxy"}},"ports":[80,443]}]' > /dev/null
+          # An entry without ports must be refused.
+          if helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
+            --set-json 'networkPolicies.ingressControllers=[{"podSelector":{"matchLabels":{"a":"b"}}}]' > /dev/null 2>&1; then
+            echo "an ingressControllers entry without ports rendered"; exit 1
+          fi
 
   build-images:
     name: Image samma-${{ matrix.component }}

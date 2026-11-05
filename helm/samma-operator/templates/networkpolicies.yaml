@@ -15,7 +15,12 @@ CNI that enforces NetworkPolicy; on one that does not, they are inert.
                   private, loopback, link-local and carrier-grade NAT
                   ranges are excluded unless config.allowPrivateTargets is
                   "true", which is also when the operator lets a Scanner
-                  point at such an address.
+                  point at such an address. They also reach the pods in
+                  networkPolicies.ingressControllers on those pods' named
+                  serving ports: where the LoadBalancer address is a VIP,
+                  kube-proxy delivers in-cluster traffic for it to those
+                  pods, so a scan of the cluster's own hostname arrives at a
+                  private pod address.
   samma-timescaledb  TimescaleDB accepts ingress on 5432 only from the
                      bridge pod and from the namespaces listed in the
                      networkPolicies.timescaledbClients value.
@@ -156,6 +161,24 @@ spec:
               - fe80::/10
               - ::1/128
             {{- end }}
+    {{- range $i, $ic := .Values.networkPolicies.ingressControllers }}
+    {{- if not (or $ic.podSelector $ic.namespaceSelector) }}
+    {{- fail (printf "networkPolicies.ingressControllers[%d] needs a podSelector or a namespaceSelector" $i) }}
+    {{- end }}
+    {{- if not $ic.ports }}
+    {{- fail (printf "networkPolicies.ingressControllers[%d] needs ports: the container port names (or numbers) it serves Ingress traffic on" $i) }}
+    {{- end }}
+    # Ingress controller pods, on their serving ports only. A LoadBalancer
+    # whose address is a VIP has kube-proxy hand in-cluster traffic for that
+    # address to these pods (a private address the rule above refuses).
+    - to:
+        - {{ omit $ic "ports" | toYaml | indent 10 | trim }}
+      ports:
+        {{- range $ic.ports }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+    {{- end }}
 {{- if .Values.timescaledb.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
