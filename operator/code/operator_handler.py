@@ -165,13 +165,51 @@ def init_operator():
 
 
 def count_running_scan_jobs():
+    """Unfinished scan Jobs that hold a slot. A suspended Job (a scheduled run
+    waiting for the queue) holds none: counting it would keep its own slot
+    from ever opening."""
     jobs = batch1api.list_namespaced_job(NAMESPACE, label_selector=jobspec.LABEL_SCANNER)
     running = 0
     for job in jobs.items:
         status = job.status.to_dict() if job.status is not None else {}
-        if not jobspec.job_finished(status):
+        spec = job.spec.to_dict() if job.spec is not None else {}
+        if not jobspec.job_finished(status) and not jobspec.job_suspended(spec):
             running += 1
     return running
+
+
+def resume_waiting_scan_jobs(free):
+    """Resume up to free suspended scan Jobs, oldest first (every one when
+    free is None). The operator's CronJobs create their Jobs suspended when
+    SAMMA_MAX_CONCURRENT_SCANS is set, so scheduled runs wait here for a slot
+    like first scans do. Returns how many were resumed."""
+    jobs = batch1api.list_namespaced_job(NAMESPACE, label_selector=jobspec.LABEL_SCANNER)
+    waiting = []
+    for job in jobs.items:
+        spec = job.spec.to_dict() if job.spec is not None else {}
+        if not jobspec.job_suspended(spec):
+            continue
+        status = job.status.to_dict() if job.status is not None else {}
+        waiting.append({
+            'name': job.metadata.name,
+            'created': job.metadata.creation_timestamp.isoformat() if job.metadata.creation_timestamp else None,
+            'suspended': True,
+            'finished': jobspec.job_finished(status),
+        })
+    names = jobspec.jobs_to_resume(waiting, free)
+    resumed = 0
+    for name in names:
+        try:
+            merge_batch.patch_namespaced_job(name, NAMESPACE, {'spec': {'suspend': False}})
+        except ApiException as exc:
+            if exc.status == 404:  # finished and collected, or its CronJob went
+                continue
+            raise
+        logging.info("Resumed scheduled Job %s", name)
+        resumed += 1
+    if len(waiting) > resumed:
+        logging.info("%d scheduled scan Jobs waiting for a free slot", len(waiting) - resumed)
+    return resumed
 
 
 def create_job(body):
@@ -264,6 +302,7 @@ scan_queue = ScanQueue(
     launch=create_job,
     on_launched=job_launched,
     still_wanted=scanner_still_exists,
+    resume_waiting=resume_waiting_scan_jobs,
 )
 _drainer_stop = threading.Event()
 
@@ -538,12 +577,16 @@ def create_fn(body, retry, patch, **kwargs):
 
 @kopf.on.resume(GROUP, VERSION, PLURAL)
 def resume_fn(body, retry, patch, **kwargs):
-    """After a restart, re-queue the first Jobs of Scanners that were still
-    waiting for a slot. Jobs that exist already are adopted, not repeated."""
+    """After a restart, bring the Scanner's CronJobs up to what this operator
+    builds (an upgrade can change the schedule minute or the suspended Jobs;
+    unchanged ones are left alone) and re-queue the first Jobs of Scanners
+    that were still waiting for a slot. Jobs that exist already are adopted,
+    not repeated."""
+    jobs, cronjobs = build_scanner_objects(body, retry)
+    reconcile_cronjobs(body, cronjobs)
     annotations = body['metadata'].get('annotations') or {}
     if annotations.get(jobspec.ANNOTATION_INITIAL_SCAN) != jobspec.INITIAL_SCAN_QUEUED:
         return
-    jobs, _ = build_scanner_objects(body, retry)
     submit_jobs(body, jobs, patch)
 
 

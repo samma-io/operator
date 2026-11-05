@@ -74,6 +74,12 @@ spec:
               value: {{ .Values.serviceAccounts.scanner | quote }}
             - name: SAMMA_MAX_CONCURRENT_SCANS
               value: {{ .Values.scanners.maxConcurrentScans | quote }}
+            {{- $defaultSchedule := .Values.scanners.defaultSchedule | default "0 0 * * 0" | trim }}
+            {{- if not (regexMatch `^(@(yearly|annually|monthly|weekly|daily|midnight|hourly)|([A-Za-z0-9*/,?-]+\s+){4}[A-Za-z0-9*/,?-]+)$` $defaultSchedule) }}
+            {{- fail (printf "scanners.defaultSchedule %q is not five cron fields or an @-macro such as @daily" $defaultSchedule) }}
+            {{- end }}
+            - name: SAMMA_IO_WEEKLY_SCHEDULE
+              value: {{ $defaultSchedule | quote }}
             - name: SAMMA_SCAN_DEADLINE_SECONDS
               value: {{ .Values.scanners.scanDeadlineSeconds | quote }}
             - name: SAMMA_JOB_TTL_SECONDS

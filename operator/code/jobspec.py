@@ -218,7 +218,7 @@ class Settings(object):
             image_overrides=overrides,
             resources=resources,
             queue_interval_seconds=number(ENV_QUEUE_INTERVAL, 15, minimum=1),
-            default_schedule=text(ENV_DEFAULT_SCHEDULE, DEFAULT_SCHEDULE),
+            default_schedule=default_schedule_or_fallback(text(ENV_DEFAULT_SCHEDULE, DEFAULT_SCHEDULE)),
             nats_secret=text(ENV_NATS_SECRET, ""),
             nats_scanner_user=text(ENV_NATS_SCANNER_USER, DEFAULT_NATS_SCANNER_USER),
             legacy_base_scanner=flag(ENV_LEGACY_BASE_SCANNER, False),
@@ -490,13 +490,15 @@ def spec_hash(obj):
     return hashlib.sha256(json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
 
 
-def cron_schedule(schedule, target, default_schedule=DEFAULT_SCHEDULE):
-    """The schedule for a target's CronJob.
+def cron_schedule(schedule, target, default_schedule=DEFAULT_SCHEDULE, minute_key=None):
+    """The schedule for a CronJob.
 
-    A Scanner that uses the default weekly schedule ("none", empty or the
-    default expression itself) gets a minute derived from the target hash,
-    so many targets created on the same day do not all fire in the same
-    minute. A schedule the user chose is returned unchanged.
+    A Scanner that uses the default schedule ("none", empty or the default
+    expression itself) gets a minute derived from a hash, so many CronJobs
+    created on the same day do not all fire in the same minute. The hash is
+    of minute_key when given (build_cronjob passes the CronJob's name, so
+    the scanners of one target spread out too), else of the target. A
+    schedule the user chose is returned unchanged.
     """
     chosen = (schedule or "").strip()
     default = (default_schedule or DEFAULT_SCHEDULE).strip()
@@ -505,8 +507,22 @@ def cron_schedule(schedule, target, default_schedule=DEFAULT_SCHEDULE):
     fields = default.split()
     if len(fields) != 5:
         return default
-    fields[0] = str(int(target_hash(target), 16) % 60)
+    fields[0] = str(int(target_hash(minute_key or target), 16) % 60)
     return " ".join(fields)
+
+
+def default_schedule_or_fallback(value):
+    """The default schedule the operator uses: value when it is a five field
+    cron expression or an @-macro CronJob accepts, else DEFAULT_SCHEDULE.
+    "none" is not a schedule here; it is what a Scanner says to get this one."""
+    value = (value or "").strip()
+    if not value or value == "none":
+        return DEFAULT_SCHEDULE
+    try:
+        target_policy.validate_schedule(value)
+    except target_policy.TargetRejected:
+        return DEFAULT_SCHEDULE
+    return value
 
 
 def scanner_env(spec_fields, defaults):
@@ -719,15 +735,22 @@ def build_cronjob(spec, variant, target, env, settings, schedule, owner=None, sc
     if samma_io_id not in (None, ""):
         annotations[ANNOTATION_SAMMA_IO_ID] = str(samma_io_id)
     name = object_name(spec.name, variant.name, target, samma_io_id)
+    job_spec = _job_spec(spec, variant, target, env, settings, labels, annotations)
+    if settings.max_concurrent_scans > 0:
+        # The CronJob controller starts its Jobs on its own schedule, outside
+        # the operator's queue. Created suspended, a scheduled Job waits until
+        # the queue resumes it in a free slot, so max_concurrent_scans holds
+        # for scheduled runs too (README, "Concurrency and scheduling").
+        job_spec["suspend"] = True
     cron_spec = {
-        "schedule": cron_schedule(schedule, target, settings.default_schedule),
+        "schedule": cron_schedule(schedule, target, settings.default_schedule, minute_key=name),
         "concurrencyPolicy": "Forbid",
         "successfulJobsHistoryLimit": 1,
         "failedJobsHistoryLimit": 1,
         "startingDeadlineSeconds": 600,
         "jobTemplate": {
             "metadata": {"labels": dict(labels), "annotations": dict(annotations)},
-            "spec": _job_spec(spec, variant, target, env, settings, labels, annotations),
+            "spec": job_spec,
         },
     }
     metadata = _metadata(name, settings, labels, annotations, owner)
@@ -764,3 +787,22 @@ def job_finished(status):
         if kind in ("Complete", "Failed") and str(condition.get("status", "")).lower() == "true":
             return True
     return bool(status.get("completionTime") or status.get("completion_time"))
+
+
+def job_suspended(spec):
+    """True when a Job spec (a dict) has suspend set: a scheduled scan that
+    waits for the queue to resume it."""
+    return bool((spec or {}).get("suspend"))
+
+
+def jobs_to_resume(jobs, free):
+    """Names of the suspended, unfinished Jobs to resume now, oldest first.
+
+    jobs is a list of dicts with name, created (a timestamp that sorts, or
+    None), suspended and finished. free is how many slots are open; None
+    means there is no limit and every waiting Job is resumed."""
+    waiting = [job for job in jobs if job.get("suspended") and not job.get("finished")]
+    waiting.sort(key=lambda job: (str(job.get("created") or ""), job.get("name") or ""))
+    if free is None:
+        return [job["name"] for job in waiting]
+    return [job["name"] for job in waiting[:max(0, int(free))]]

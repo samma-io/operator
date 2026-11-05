@@ -74,6 +74,7 @@ class ScanQueueTests(unittest.TestCase):
         self.assertEqual(self.queue.state(key("j4")), "launched")
 
     def test_running_jobs_from_elsewhere_count(self):
+        # Resumed scheduled Jobs, or Jobs from an operator without a limit.
         self.cluster.running = ["cron-born-1", "cron-born-2"]
         self.assertEqual(self.queue.submit(key("j0"), job("j0")), "queued")
         self.cluster.finish(1)
@@ -168,6 +169,76 @@ class ScanQueueTests(unittest.TestCase):
         self.assertEqual(results.count("queued"), 6)
         self.assertEqual(len(self.cluster.running), 2)
         self.assertEqual(len(self.queue), 6)
+
+
+class ResumeWaitingTests(unittest.TestCase):
+    """Scheduled Jobs are created suspended by their CronJobs; the queue
+    resumes them in the slots its own queued Jobs leave free."""
+
+    def setUp(self):
+        self.cluster = FakeCluster()
+        self.waiting = []
+        self.calls = []
+
+    def resume(self, free):
+        self.calls.append(free)
+        names = self.waiting if free is None else self.waiting[:free]
+        for name in list(names):
+            self.waiting.remove(name)
+            self.cluster.running.append(name)
+        return len(names)
+
+    def test_scheduled_jobs_share_the_limit(self):
+        queue = scanqueue.ScanQueue(2, self.cluster.count_running, self.cluster.launch, resume_waiting=self.resume)
+        self.waiting = ["cron-a", "cron-b", "cron-c"]
+        self.assertEqual(queue.drain(), [])
+        self.assertEqual(self.cluster.running, ["cron-a", "cron-b"])
+        self.assertEqual(self.waiting, ["cron-c"])
+        # Full: the hook is not called with nothing to give.
+        self.assertEqual(queue.drain(), [])
+        self.assertEqual(self.calls, [2])
+        self.cluster.finish(1)
+        queue.drain()
+        self.assertEqual(self.cluster.running, ["cron-b", "cron-c"])
+        self.assertEqual(self.calls, [2, 1])
+
+    def test_queued_first_scans_go_before_scheduled_runs(self):
+        queue = scanqueue.ScanQueue(2, self.cluster.count_running, self.cluster.launch, resume_waiting=self.resume)
+        self.cluster.running = ["busy-1", "busy-2"]
+        self.waiting = ["cron-a"]
+        self.assertEqual(queue.submit(key("j0"), job("j0")), "queued")
+        self.cluster.finish(1)
+        self.assertEqual(queue.drain(), [key("j0")])
+        self.assertEqual(self.waiting, ["cron-a"])
+        self.cluster.finish(1)
+        queue.drain()
+        self.assertEqual(self.cluster.running, ["j0", "cron-a"])
+
+    def test_no_limit_resumes_everything(self):
+        queue = scanqueue.ScanQueue(0, self.cluster.count_running, self.cluster.launch, resume_waiting=self.resume)
+        self.waiting = ["cron-a", "cron-b", "cron-c"]
+        queue.drain()
+        self.assertEqual(self.calls, [None])
+        self.assertEqual(self.waiting, [])
+        self.assertEqual(self.cluster.count_calls, 0)
+
+    def test_resume_failure_is_logged_not_raised(self):
+        def broken(free):
+            raise RuntimeError("503")
+
+        queue = scanqueue.ScanQueue(2, self.cluster.count_running, self.cluster.launch, resume_waiting=broken)
+        self.assertEqual(queue.submit(key("j0"), job("j0")), "launched")
+        self.assertEqual(queue.drain(), [])
+
+    def test_count_failure_resumes_nothing(self):
+        def broken():
+            raise RuntimeError("503")
+
+        queue = scanqueue.ScanQueue(2, broken, self.cluster.launch, resume_waiting=self.resume)
+        self.waiting = ["cron-a"]
+        queue.drain()
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.waiting, ["cron-a"])
 
 
 class DrainerTests(unittest.TestCase):

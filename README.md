@@ -166,7 +166,7 @@ spec:
 | `enable` | Turns scanning on. `"false"`, `"0"`, `"no"` and `"off"` turn it off, and so does removing the annotation. |
 | `profile` | Comma-separated [profiles](#scanner-profiles). Takes priority over `scanners`. |
 | `scanners` | An explicit scanner list, used when there is no `profile`. |
-| `scheduler` | Cron expression for the repeat scan. The default is weekly. |
+| `scheduler` | Cron expression for the repeat scan. The default is `scanners.defaultSchedule`, weekly unless you change it. |
 | `samma_io_id` | Id added to every finding. |
 | `samma_io_tags` | Comma-separated tags added to every finding. |
 | `samma_io_json` | Extra JSON added to every finding. |
@@ -338,18 +338,28 @@ not scheduled until you relax the namespace's enforce label.
 ### Concurrency and scheduling
 
 A Scanner's first Jobs go through a queue. At most `scanners.maxConcurrentScans` scan Jobs
-(default 2) run at the same time in the namespace; Jobs started by CronJobs count too. Queued
-Jobs start in order as slots free up, checked every `SAMMA_QUEUE_INTERVAL_SECONDS` (default 15).
+(default 2) run at the same time in the namespace, scheduled runs included. Queued Jobs start in
+order as slots free up, checked every `SAMMA_QUEUE_INTERVAL_SECONDS` (default 15).
+
+With a limit set, every CronJob creates its Jobs suspended (`spec.suspend: true`). On each check
+the operator first launches the queued first Jobs, then resumes suspended scheduled Jobs, oldest
+first, in the slots still free. A suspended Job holds no slot and runs no pod; Kubernetes starts
+its `activeDeadlineSeconds` when it is resumed. Under `concurrencyPolicy: Forbid` a run still
+waiting when the next one is due makes the CronJob skip that one.
 A Scanner whose first scan is waiting carries the annotation `samma.io/initial-scan: queued` and
 an event `ScanQueued`; it becomes `launched` once every Job exists. After an operator restart,
 Scanners still marked `queued` are queued again. `maxConcurrentScans: 0` removes the limit.
 
 CronJobs use `concurrencyPolicy: Forbid`, keep one successful and one failed Job, and skip a run
-that could not start within `startingDeadlineSeconds: 600`. A Scanner on the default weekly
-schedule gets a minute derived from the target hash, so many targets registered on the same day do
-not all fire in the same minute; a `scheduler` you set is used unchanged.
+that could not start within `startingDeadlineSeconds: 600`. A Scanner without a `scheduler` (or
+with `none`) uses `scanners.defaultSchedule`, weekly `0 0 * * 0` when empty. A five field default
+gets a minute derived from the CronJob's name, so the scanners of one target, and the targets
+registered on the same day, do not all fire in the same minute; a `scheduler` you set is used
+unchanged.
 
-Changing a Scanner's `spec` recreates its CronJobs. The first Job is not run again.
+Changing a Scanner's `spec` recreates its CronJobs. The first Job is not run again. After an
+operator restart, CronJobs whose built spec changed (a new release, another default schedule or
+limit) are recreated the same way.
 
 ---
 
@@ -884,7 +894,7 @@ curl -X DELETE http://localhost:8080/scanner \
 | `NATS_URL` | `nats://nats:4222` | NATS server URL |
 | `NATS_ENABLED` | `True` | Enable NATS publishing |
 | `NATS_SUBJECT` | `samma-io.scan` | NATS subject for scan results |
-| `SAMMA_IO_WEEKLY_SCHEDULE` | `0 0 * * 0` | Default CronJob schedule |
+| `SAMMA_IO_WEEKLY_SCHEDULE` | `0 0 * * 0` | Schedule of CronJobs whose Scanner sets none (chart: `scanners.defaultSchedule`); a value that is not five cron fields or an @-macro falls back to the default |
 | `SAMMA_IO_API_URL` | — | External samma.io API base URL |
 | `SAMMA_IO_API_TOKEN` | — | Bearer token for external API (skipped if empty) |
 | `SAMMA_IO_PROFILE_ID` | — | Profile ID sent to external API |
@@ -1050,7 +1060,8 @@ kubectl delete crd scanner.samma.io scanreports.samma.io   # Helm leaves CRDs in
 | `scanners.imagePrefix`, `scanners.imageTag`, `scanners.images` | `""`, `""`, `{}` | Mirror and per-scanner image references, see [Scan Jobs and CronJobs](#scan-jobs-and-cronjobs) |
 | `scanners.pullPolicy` | `IfNotPresent` | `imagePullPolicy` of scanner containers |
 | `scanners.resources` | 100m/128Mi requests, 1/512Mi limits | Resources of every scanner container |
-| `scanners.maxConcurrentScans` | `2` | Scan Jobs allowed to run at the same time |
+| `scanners.maxConcurrentScans` | `2` | Scan Jobs allowed to run at the same time, scheduled runs included |
+| `scanners.defaultSchedule` | `""` (weekly, `0 0 * * 0`) | Schedule of Scanners that set none, see [Concurrency and scheduling](#concurrency-and-scheduling) |
 | `scanners.scanDeadlineSeconds` | `900` | `activeDeadlineSeconds` of scan Jobs |
 | `scanners.ttlSecondsAfterFinished` | `3600` | When finished Jobs are removed |
 | `scanners.nmapRawSockets` | `false` | Give nmap `NET_RAW` for SYN scans |

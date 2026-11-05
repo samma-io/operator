@@ -5,6 +5,27 @@ A release is a tag `v<version>` on `main`. Pushing it runs
 `oci://ghcr.io/samma-io/charts/samma-operator` and the images to
 `ghcr.io/samma-io/samma-{operator,api,bridge}` (README, "Releases").
 
+## 0.2.7
+
+- `scanners.maxConcurrentScans` now holds for scheduled runs. With a limit
+  set, the CronJobs create their Jobs suspended; on every queue tick the
+  operator launches the queued first Jobs, then resumes suspended scheduled
+  Jobs, oldest first, in the slots left. Before, the CronJob controller
+  started them on its own, so a profile's CronJobs against one host fired
+  together whatever the limit. A suspended Job holds no slot; its
+  `activeDeadlineSeconds` starts when it is resumed. `0` still removes the
+  limit, and then CronJob Jobs start unsuspended as before.
+- `scanners.defaultSchedule` (env `SAMMA_IO_WEEKLY_SCHEDULE`) sets the
+  schedule of every Scanner without a `scheduler`; empty keeps weekly
+  `0 0 * * 0`. The chart refuses a value that is not five cron fields or an
+  @-macro, and the operator falls back to weekly for one set by hand.
+- The minute of a default schedule is derived from the CronJob's name
+  instead of the target, so the scanners of one target spread over the hour.
+- The resume handler reconciles each Scanner's CronJobs after an operator
+  restart, so an upgrade reaches existing Scanners without editing them.
+  Upgrading from 0.2.6 therefore recreates every CronJob on the default
+  schedule once (new minute, suspended Jobs).
+
 ## 0.2.6
 
 - `nats.enabled` (default `true`) gates the bundled NATS: its Deployment,
