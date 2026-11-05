@@ -15,10 +15,10 @@ name: End-to-end test
 # k3s enforces the chart's NetworkPolicies with kube-router, which refuses a
 # new pod's connections for about a second until the pod's address is in its
 # ipsets. A scanner that connects in its first second can fail on that alone
-# (seen with http-headers-scanner and http-redirect-scanner); the fix is a
-# start-up egress gate in samma-io/detect (tracked as ankra-2t6igm.13). The
-# test keeps NetworkPolicies on and uses dns-scanner, whose first connection
-# is a DNS query; a scan that still fails this way fails the test.
+# (seen with http-headers-scanner and http-redirect-scanner). Detect 2.0.3
+# (samma-io/detect#13), the chart default since 0.2.8, waits for NATS to
+# answer before it scans. The test keeps NetworkPolicies on; a scan that
+# still fails this way fails the test.
 
 on:
   push:

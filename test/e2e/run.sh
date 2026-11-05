@@ -295,28 +295,9 @@ k delete pod e2e-nats-client --wait=false >/dev/null
 log "5. An annotated Ingress gets a Scanner, a Job and a succeeded ScanReport"
 # ---------------------------------------------------------------------------
 
-# WORKAROUND for a bridge bug; remove this block once the bridge is fixed.
-# The bridge lists the Scanners when it starts and then at most once every
-# bridge.scannerCacheSeconds (30), and drops a message whose target is in
-# none of the Scanners it listed, without listing again
-# (bridge/code/samma_bridge/scanners.py refresh(), pipeline.py accept()). A
-# Scanner created within that window after a list loses its first scan's
-# results for good. Without this wait the test hits it every time: the scan
-# finishes about 20s after the bridge starts, the bridge logs "Dropped
-# finding from dns-scanner: example.com is not the target of any Scanner"
-# and no ScanReport is written. The wait lets the window since the bridge
-# started pass before the Ingress is created.
-cache_seconds=$(k get deployment samma-bridge -o json |
-  jq -r '.spec.template.spec.containers[0].env[] | select(.name == "SCANNER_CACHE_SECONDS") | .value')
-bridge_started=$(k get pods -l app=samma-bridge -o json |
-  jq -r '[.items[].status.containerStatuses[0].state.running.startedAt // empty][0] // empty')
-[[ -n "$cache_seconds" && -n "$bridge_started" ]] || fail "could not read the bridge's cache window and start time"
-bridge_age=$(( $(date +%s) - $(jq -rn --arg t "$bridge_started" '$t | fromdateiso8601') ))
-if (( bridge_age < cache_seconds + 5 )); then
-  printf '    waiting %ss for the bridge Scanner cache window (workaround, see run.sh)\n' $(( cache_seconds + 5 - bridge_age ))
-  sleep $(( cache_seconds + 5 - bridge_age ))
-fi
-
+# No wait before the Ingress: the bridge re-lists its Scanners when a
+# message names a target it has not seen (0.2.8), so a Scanner created a
+# moment after the bridge's last list still gets its first ScanReport.
 k apply -f "$HERE/manifests/ingress.yaml" >/dev/null
 wait_until 60 "the operator made one Scanner for Ingress $INGRESS" ingress_has_one_scanner
 scanner_name=$(name_of scanner.samma.io "samma.io/ingress-name=$INGRESS")
