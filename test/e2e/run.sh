@@ -295,20 +295,6 @@ k delete pod e2e-nats-client --wait=false >/dev/null
 log "5. An annotated Ingress gets a Scanner, a Job and a succeeded ScanReport"
 # ---------------------------------------------------------------------------
 
-# The bridge lists the Scanners when it starts and then at most once every
-# bridge.scannerCacheSeconds, and it drops a message whose target is in none
-# of the Scanners it listed, without listing again. A scan that finished
-# within that window after the bridge started would lose its results, so the
-# Ingress is created only once the window has passed.
-cache_seconds=$(k get deployment samma-bridge -o json |
-  jq -r '.spec.template.spec.containers[0].env[] | select(.name == "SCANNER_CACHE_SECONDS") | .value')
-bridge_started=$(k get pods -l app=samma-bridge -o json |
-  jq -r '[.items[].status.containerStatuses[0].state.running.startedAt // empty][0] // empty')
-[[ -n "$cache_seconds" && -n "$bridge_started" ]] || fail "could not read the bridge's cache window and start time"
-bridge_age=$(( $(date +%s) - $(jq -rn --arg t "$bridge_started" '$t | fromdateiso8601') ))
-if (( bridge_age < cache_seconds + 5 )); then
-  sleep $(( cache_seconds + 5 - bridge_age ))
-fi
 
 k apply -f "$HERE/manifests/ingress.yaml" >/dev/null
 wait_until 60 "the operator made one Scanner for Ingress $INGRESS" ingress_has_one_scanner
