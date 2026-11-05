@@ -5,7 +5,7 @@ checks the whole path: Pod Security, a scan from an annotated Ingress to a ScanR
 refusing an injected target, NATS authentication, the suspended scheduled Jobs the queue resumes,
 cleanup through garbage collection, and `helm uninstall` with its pre-delete hook. The header of
 `run.sh` lists every check. CI runs it on every pull request and push to `main`
-(`.github/workflows/e2e.yaml`, about 10 minutes).
+(`.github/workflows/e2e.yaml`, about 4 minutes, of which the checks take under 2).
 
 | File | What it is |
 |---|---|
