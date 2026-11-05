@@ -102,6 +102,9 @@ jobs:
             --k3s-arg '--disable=metrics-server@server:0' \
             --wait --timeout 180s
           kubectl wait node --all --for=condition=Ready --timeout=120s
+          # k3s creates CoreDNS from its bundled manifests shortly after the
+          # API server is up; wait for the Deployment to exist, then to roll out.
+          timeout 120 bash -c 'until kubectl -n kube-system get deployment/coredns >/dev/null 2>&1; do sleep 2; done'
           kubectl -n kube-system rollout status deployment/coredns --timeout=120s
           k3d image import --cluster "$CLUSTER" \
             samma-e2e/samma-operator:e2e samma-e2e/samma-bridge:e2e samma-e2e/samma-api:e2e
