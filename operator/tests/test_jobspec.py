@@ -109,6 +109,17 @@ class SettingsTests(unittest.TestCase):
         self.assertFalse(s.nmap_raw_sockets)
         self.assertEqual(s.run_as_user, 1)
 
+    def test_default_schedule_must_be_a_schedule(self):
+        for value in ("0 3 * * 1", "@daily", "*/30 * * * *"):
+            with self.subTest(value=value):
+                self.assertEqual(jobspec.Settings.from_env({"SAMMA_IO_WEEKLY_SCHEDULE": value}).default_schedule, value)
+        # "none" is what a Scanner says to get the default; as the default it
+        # would mean no schedule at all. Anything CronJob would refuse falls
+        # back too, instead of every CronJob create failing.
+        for value in ("none", "", "  ", "weekly", "0 0 * *", "0 0 * * 0; rm", "@reboot"):
+            with self.subTest(value=value):
+                self.assertEqual(jobspec.Settings.from_env({"SAMMA_IO_WEEKLY_SCHEDULE": value}).default_schedule, "0 0 * * 0")
+
 
 class ResolveRunsTests(unittest.TestCase):
     def test_nmap_has_three_variants(self):
@@ -220,6 +231,18 @@ class CronScheduleTests(unittest.TestCase):
     def test_user_schedule_is_kept(self):
         self.assertEqual(jobspec.cron_schedule("0 3 * * 1", "a.example.com"), "0 3 * * 1")
         self.assertEqual(jobspec.cron_schedule("@daily", "a.example.com"), "@daily")
+
+    def test_minute_key_spreads_the_scanners_of_one_target(self):
+        # build_cronjob keys the minute on the CronJob name, so a profile's
+        # scanners against one host do not all fire in the same minute.
+        names = ["{0}-{1}".format(scanner, jobspec.target_hash("a.example.com")) for scanner in sorted(jobspec.SCANNERS)]
+        minutes = {jobspec.cron_schedule("none", "a.example.com", minute_key=name).split()[0] for name in names}
+        self.assertGreater(len(minutes), len(names) // 2)
+        self.assertEqual(
+            jobspec.cron_schedule("none", "a.example.com", minute_key="nmap-port-1234abcd"),
+            jobspec.cron_schedule("none", "b.example.com", minute_key="nmap-port-1234abcd"),
+        )
+        self.assertEqual(jobspec.cron_schedule("0 3 * * 1", "a.example.com", minute_key="x"), "0 3 * * 1")
 
     def test_custom_default_from_settings(self):
         result = jobspec.cron_schedule("none", "a.example.com", default_schedule="0 4 * * 6")
@@ -491,7 +514,7 @@ class BuildCronJobTests(unittest.TestCase):
         self.assertEqual(spec["successfulJobsHistoryLimit"], 1)
         self.assertEqual(spec["failedJobsHistoryLimit"], 1)
         self.assertEqual(spec["startingDeadlineSeconds"], 600)
-        self.assertEqual(spec["schedule"], jobspec.cron_schedule("none", "www.example.com"))
+        self.assertEqual(spec["schedule"], jobspec.cron_schedule("none", "www.example.com", minute_key=cron["metadata"]["name"]))
         self.assertEqual(spec["jobTemplate"]["metadata"]["labels"], cron["metadata"]["labels"])
         self.assertEqual(spec["jobTemplate"]["spec"]["backoffLimit"], 1)
         self.assertEqual(spec["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["name"], "tls-scanner")
@@ -510,6 +533,45 @@ class BuildCronJobTests(unittest.TestCase):
     def test_user_schedule_is_kept(self):
         cron = jobspec.build_cronjob(self.spec, self.variant, "www.example.com", ENV, settings(), "0 3 * * 1")
         self.assertEqual(cron["spec"]["schedule"], "0 3 * * 1")
+
+    def test_scheduled_jobs_wait_for_the_queue_when_there_is_a_limit(self):
+        # With a limit the CronJob's Jobs start suspended and the operator's
+        # queue resumes them in a free slot.
+        self.assertIs(self.cron["spec"]["jobTemplate"]["spec"]["suspend"], True)
+        limited = jobspec.build_cronjob(self.spec, self.variant, "www.example.com", ENV, settings(max_concurrent_scans=1), "none")
+        self.assertIs(limited["spec"]["jobTemplate"]["spec"]["suspend"], True)
+        unlimited = jobspec.build_cronjob(self.spec, self.variant, "www.example.com", ENV, settings(max_concurrent_scans=0), "none")
+        self.assertNotIn("suspend", unlimited["spec"]["jobTemplate"]["spec"])
+        # Turning the limit on or off recreates the CronJobs.
+        self.assertNotEqual(
+            unlimited["metadata"]["annotations"][jobspec.ANNOTATION_SPEC_HASH],
+            limited["metadata"]["annotations"][jobspec.ANNOTATION_SPEC_HASH],
+        )
+        # The first scan is the queue's own Job and is never suspended.
+        first = jobspec.build_job(self.spec, self.variant, "www.example.com", ENV, settings(), owner=OWNER, scanner_name="my-scanner")
+        self.assertNotIn("suspend", first["spec"])
+
+
+class SuspendedJobTests(unittest.TestCase):
+    def test_job_suspended(self):
+        self.assertTrue(jobspec.job_suspended({"suspend": True}))
+        for spec in ({"suspend": False}, {}, None):
+            with self.subTest(spec=spec):
+                self.assertFalse(jobspec.job_suspended(spec))
+
+    def test_jobs_to_resume_oldest_first_up_to_free(self):
+        jobs = [
+            {"name": "c", "created": "2026-11-05T00:03:00+00:00", "suspended": True, "finished": False},
+            {"name": "a", "created": "2026-11-05T00:01:00+00:00", "suspended": True, "finished": False},
+            {"name": "done", "created": "2026-11-05T00:00:00+00:00", "suspended": True, "finished": True},
+            {"name": "running", "created": "2026-11-05T00:00:00+00:00", "suspended": False, "finished": False},
+            {"name": "b", "created": "2026-11-05T00:02:00+00:00", "suspended": True, "finished": False},
+        ]
+        self.assertEqual(jobspec.jobs_to_resume(jobs, 2), ["a", "b"])
+        self.assertEqual(jobspec.jobs_to_resume(jobs, 0), [])
+        self.assertEqual(jobspec.jobs_to_resume(jobs, -1), [])
+        self.assertEqual(jobspec.jobs_to_resume(jobs, None), ["a", "b", "c"])
+        self.assertEqual(jobspec.jobs_to_resume([], 3), [])
 
 
 class HelperTests(unittest.TestCase):

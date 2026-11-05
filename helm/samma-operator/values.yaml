@@ -110,9 +110,15 @@ scanners:
       cpu: "1"
       memory: 512Mi
   # How many scan Jobs may run at the same time. A Scanner's first Jobs wait
-  # in a queue for a free slot; CronJob runs count towards the limit.
-  # 0 removes the limit.
+  # in a queue for a free slot; scheduled runs share the limit (their
+  # CronJobs create them suspended and the queue resumes them in a free
+  # slot). 0 removes the limit.
   maxConcurrentScans: 2
+  # The schedule of every CronJob whose Scanner sets no scheduler (or
+  # "none"): five cron fields or an @-macro CronJob accepts. Empty is weekly,
+  # "0 0 * * 0". The minute of a five field schedule is replaced by one
+  # derived from the CronJob's name, so the scans spread over the hour.
+  defaultSchedule: ""
   # activeDeadlineSeconds of every scan Job: a scan still running after this
   # is stopped and marked failed.
   scanDeadlineSeconds: 900

@@ -4,15 +4,20 @@ A Scanner creates one Job per scanner right away. Without a limit, a burst of
 Scanners (an Ingress with many hosts, a profile with twelve scanners) starts
 every scan pod at once. ScanQueue holds the Job bodies and launches them in
 order while the number of unfinished scan Jobs in the namespace stays under
-max_concurrent. CronJob-born Jobs count towards the limit as running Jobs,
-but they are started by the CronJob controller on their own schedule.
+max_concurrent. Scheduled runs share the same limit: with a limit set, the
+operator's CronJobs create their Jobs suspended, and once the queued Jobs are
+launched, drain() hands the slots still free to resume_waiting, which resumes
+that many suspended Jobs, oldest first.
 
 The class is pure Python: the caller supplies
 
-    count_running()        -> number of unfinished scan Jobs right now
+    count_running()        -> number of unfinished, not suspended scan Jobs
     launch(body)           -> creates the Job; raising marks the entry failed
     on_launched(key, body) -> optional, called after a successful launch
     still_wanted(key, body)-> optional, False drops an entry without launching
+    resume_waiting(free)   -> optional, resumes up to free suspended Jobs (all
+                              of them when free is None: no limit) and returns
+                              how many it resumed
 
 drain() is called after every submit() and by a background thread
 (run_drainer) every few seconds, so a Job starts as soon as a slot is free.
@@ -30,13 +35,15 @@ DROPPED = "dropped"
 
 
 class ScanQueue(object):
-    def __init__(self, max_concurrent, count_running, launch, on_launched=None, still_wanted=None, logger=None):
+    def __init__(self, max_concurrent, count_running, launch, on_launched=None, still_wanted=None, logger=None,
+                 resume_waiting=None):
         # 0 (or less) means no limit.
         self.max_concurrent = int(max_concurrent)
         self.count_running = count_running
         self.launch = launch
         self.on_launched = on_launched
         self.still_wanted = still_wanted
+        self.resume_waiting = resume_waiting
         self.log = logger or logging.getLogger("samma.scanqueue")
         self._lock = threading.Lock()
         self._pending = collections.deque()
@@ -88,10 +95,11 @@ class ScanQueue(object):
             return len(self._pending)
 
     def drain(self):
-        """Launch queued Jobs while slots are free. Returns the launched keys."""
+        """Launch queued Jobs while slots are free, then resume suspended
+        scheduled Jobs in the slots left. Returns the launched keys."""
         launched = []
         with self._lock:
-            if not self._pending:
+            if not self._pending and self.resume_waiting is None:
                 return launched
             if self.max_concurrent > 0:
                 try:
@@ -102,6 +110,7 @@ class ScanQueue(object):
                 free = self.max_concurrent - running
             else:
                 free = len(self._pending)
+            # Queued Jobs first: they are a target's first scan, asked for now.
             while free > 0 and self._pending:
                 key, body = self._pending.popleft()
                 if self.still_wanted is not None:
@@ -126,6 +135,11 @@ class ScanQueue(object):
                 free -= 1
             if self._pending:
                 self.log.info("%d scan Jobs waiting for a free slot (limit %d)", len(self._pending), self.max_concurrent)
+            if self.resume_waiting is not None and (self.max_concurrent <= 0 or free > 0):
+                try:
+                    self.resume_waiting(free if self.max_concurrent > 0 else None)
+                except Exception as exc:  # the API call failed; try again next tick
+                    self.log.warning("Could not resume waiting scheduled scan Jobs: %s", exc)
         if self.on_launched is not None:
             for key, body in launched:
                 try:
