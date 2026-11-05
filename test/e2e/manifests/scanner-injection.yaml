@@ -1,0 +1,10 @@
+# A target with a shell metacharacter. The Scanner CRD's spec.target pattern
+# must make the API server refuse it before the operator ever sees it.
+apiVersion: samma.io/v1
+kind: Scanner
+metadata:
+  name: e2e-injection
+  namespace: samma-io
+spec:
+  target: "a.com; id"
+  scanners: ["dns-scanner"]

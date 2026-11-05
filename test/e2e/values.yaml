@@ -1,0 +1,31 @@
+# Chart values for the end-to-end test (test/e2e/run.sh). Everything not set
+# here is the chart default, NetworkPolicies included.
+
+acceptScanningTerms: true
+
+# run.sh creates samma-io itself, labelled pod-security enforce: restricted,
+# before the install.
+createNamespace: false
+
+# The images e2e.yaml builds from this checkout and imports into k3d.
+# pullPolicy Never: a missing import fails the pod instead of quietly pulling
+# a released image, so the run always tests the checkout's own code.
+operator:
+  image: samma-e2e/samma-operator
+  tag: e2e
+  pullPolicy: Never
+bridge:
+  image: samma-e2e/samma-bridge
+  tag: e2e
+  pullPolicy: Never
+api:
+  image: samma-e2e/samma-api
+  tag: e2e
+  pullPolicy: Never
+  token: e2e-not-a-secret
+
+# The bundled TimescaleDB is left out: its Deployment has no securityContext,
+# so a namespace that enforces restricted refuses its pod (README, "Pod
+# security"). The bridge then writes ScanReports only.
+timescaledb:
+  enabled: false

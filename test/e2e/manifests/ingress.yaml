@@ -1,0 +1,30 @@
+# The Ingress the test opts in. The operator makes one Scanner per scanner
+# and host; in its own namespace the Ingress owns them, so deleting it
+# removes the Scanners and, through them, every Job, CronJob and ScanReport.
+#
+# example.com (RFC 2606) is a public name that is fine to query, and
+# dns-scanner only asks the cluster's resolver for its A, AAAA, MX and TXT
+# records: nothing connects to the host. The operator still resolves the
+# name and refuses it unless every address is public (allowPrivateTargets
+# false, the default), which example.com passes. Never put an active
+# scanner (port-scanner, nmap, nikto, ...) on a host you do not own here.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: e2e-example
+  namespace: samma-io
+  annotations:
+    samma-io.alpha.kubernetes.io/enable: "true"
+    samma-io.alpha.kubernetes.io/scanners: "dns-scanner"
+spec:
+  rules:
+    - host: example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: e2e-example
+                port:
+                  number: 80

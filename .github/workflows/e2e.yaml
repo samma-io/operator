@@ -1,0 +1,121 @@
+name: End-to-end test
+
+# Installs the chart from this checkout on a throwaway k3d cluster, with the
+# operator, bridge and API images built from this checkout (not a release),
+# and runs test/e2e/run.sh: Pod Security restricted, a ScanReport from an
+# annotated Ingress, the CRD refusing an injected target, NATS refusing
+# anonymous clients, a suspended scheduled Job resumed by the queue, cleanup
+# by garbage collection, and helm uninstall with its pre-delete hook.
+# test/e2e/README.md describes each check and how to run it locally.
+#
+# Scan target: example.com with dns-scanner only, a passive check (DNS
+# queries through the cluster's resolver). Never point an active scanner at
+# a host you do not own from here.
+#
+# k3s enforces the chart's NetworkPolicies with kube-router, which refuses a
+# new pod's connections for about a second until the pod's address is in its
+# ipsets. A scanner that connects in its first second can fail on that alone
+# (seen with http-headers-scanner and http-redirect-scanner); the fix is a
+# start-up egress gate in samma-io/detect (tracked as ankra-2t6igm.13). The
+# test keeps NetworkPolicies on and uses dns-scanner, whose first connection
+# is a DNS query; a scan that still fails this way fails the test.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  k3d:
+    name: k3d end-to-end
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      K3D_VERSION: v5.9.0
+      K3S_IMAGE: rancher/k3s:v1.36.5-k3s1
+      KUBECTL_VERSION: v1.36.5
+      HELM_VERSION: v3.22.1
+      CLUSTER: samma-e2e
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - name: Install k3d
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/k3d" "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64"
+          sudo install -m 0755 "$RUNNER_TEMP/k3d" /usr/local/bin/k3d
+          k3d version
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Loaded into the runner's Docker, then imported into k3d below. The
+      # tags match test/e2e/values.yaml, which sets pullPolicy Never.
+      - name: Build samma-operator
+        uses: docker/build-push-action@v6
+        with:
+          context: operator
+          load: true
+          tags: samma-e2e/samma-operator:e2e
+          cache-from: type=gha,scope=e2e-operator
+          cache-to: type=gha,mode=max,scope=e2e-operator
+
+      - name: Build samma-bridge
+        uses: docker/build-push-action@v6
+        with:
+          context: bridge
+          load: true
+          tags: samma-e2e/samma-bridge:e2e
+          cache-from: type=gha,scope=e2e-bridge
+          cache-to: type=gha,mode=max,scope=e2e-bridge
+
+      - name: Build samma-api
+        uses: docker/build-push-action@v6
+        with:
+          context: api
+          load: true
+          tags: samma-e2e/samma-api:e2e
+          cache-from: type=gha,scope=e2e-api
+          cache-to: type=gha,mode=max,scope=e2e-api
+
+      # k3s runs its own NetworkPolicy controller and has Pod Security
+      # admission on, so both are enforced. Traefik and metrics-server are
+      # not needed: the operator only reads the Ingress.
+      - name: Create the k3d cluster
+        run: |
+          k3d cluster create "$CLUSTER" --image "$K3S_IMAGE" --no-lb \
+            --k3s-arg '--disable=traefik@server:0' \
+            --k3s-arg '--disable=metrics-server@server:0' \
+            --wait --timeout 180s
+          kubectl wait node --all --for=condition=Ready --timeout=120s
+          kubectl -n kube-system rollout status deployment/coredns --timeout=120s
+          k3d image import --cluster "$CLUSTER" \
+            samma-e2e/samma-operator:e2e samma-e2e/samma-bridge:e2e samma-e2e/samma-api:e2e
+
+      - name: Run the end-to-end test
+        timeout-minutes: 20
+        env:
+          E2E_KUBE_CONTEXT: k3d-${{ env.CLUSTER }}
+          E2E_DIAGNOSTICS_MARKER: ${{ runner.temp }}/e2e-diagnostics-done
+        run: test/e2e/run.sh
+
+      # run.sh dumps diagnostics itself when a check fails; this covers a run
+      # step that was stopped by its timeout.
+      - name: Diagnostics
+        if: failure()
+        run: |
+          if [ ! -e "$RUNNER_TEMP/e2e-diagnostics-done" ]; then test/e2e/diagnostics.sh; fi

@@ -1,0 +1,52 @@
+# A NATS client for the authentication test. It runs in samma-io, so it must
+# satisfy Pod Security restricted itself; the samma-nats NetworkPolicy lets
+# every pod of the namespace reach NATS on 4222, which is what makes a
+# refused anonymous publish a refusal by NATS and not by the network.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-nats-client
+  namespace: samma-io
+  labels:
+    app: e2e-nats-client
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  terminationGracePeriodSeconds: 1
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: nats
+      image: natsio/nats-box:0.20.1
+      command: ["sleep", "900"]
+      env:
+        # The nats CLI keeps its contexts under these; the root filesystem
+        # is read-only.
+        - name: HOME
+          value: /tmp
+        - name: XDG_CONFIG_HOME
+          value: /tmp/.config
+        - name: XDG_DATA_HOME
+          value: /tmp/.local
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
+      volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    - name: tmp
+      emptyDir: {}
