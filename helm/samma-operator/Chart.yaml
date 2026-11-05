@@ -4,8 +4,8 @@ description: Kubernetes operator that runs security scanners against the hosts y
 type: application
 # version and appVersion move together: a release is a tag v<version>, and
 # the release workflow refuses a tag that does not match this file.
-version: 0.2.7
-appVersion: "0.2.7"
+version: 0.2.8
+appVersion: "0.2.8"
 kubeVersion: ">=1.25.0"
 home: https://samma.io
 sources:
@@ -33,10 +33,8 @@ annotations:
       description: The findings of one scanner against one target.
   artifacthub.io/changes: |
     - kind: fixed
-      description: scanners.maxConcurrentScans covers scheduled runs too. With a limit set, CronJobs create their Jobs suspended and the operator resumes them, oldest first, in the slots its queue leaves free; before, CronJob runs started on their own and could exceed the limit.
-    - kind: added
-      description: scanners.defaultSchedule sets the schedule of every Scanner that does not choose one (empty is weekly, "0 0 * * 0"); the chart refuses a value that is not five cron fields or an @-macro.
+      description: The bridge no longer drops the first scan of a Scanner created since its last Scanner list; a target the cached list lacks re-lists once, at most once a second.
     - kind: changed
-      description: The minute of a default schedule is derived from the CronJob's name instead of the target, so the scanners of one target spread over the hour instead of all firing at once.
-    - kind: changed
-      description: After an operator restart, each Scanner's CronJobs are brought up to what this release builds; an upgrade applies to existing Scanners without editing them.
+      description: Detect scanners default to 2.0.3, which waits up to 10 seconds for the pod's network before scanning and keeps the IPv4 answer when IPv6 is unroutable.
+    - kind: fixed
+      description: Scan pods can reach the cluster's own ingress controller. Where the LoadBalancer address is a VIP, kube-proxy delivers in-cluster traffic for it to the controller's pods, which the samma-scanners policy refused as private addresses, so the HTTP scanners failed and the port and SSH scanners reported open ports as closed. networkPolicies.ingressControllers (default Traefik and ingress-nginx, serving ports only) opens exactly those pods and ports.

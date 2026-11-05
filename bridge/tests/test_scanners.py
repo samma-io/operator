@@ -142,6 +142,40 @@ class ScannerIndexTests(unittest.TestCase):
         self.index.refresh(force=True)
         self.assertEqual(self.lister.calls, 2)
 
+    def test_a_scanner_created_since_the_last_list_is_found_at_once(self):
+        """ankra-2t6igm.14: the first messages of a Scanner created inside
+        the ttl window were dropped, so its first scan never reached a
+        ScanReport."""
+        self.assertTrue(self.index.is_target(TARGET))
+        self.clock.advance(5)
+        self.lister.items.append(scanner_object(name="dns-new", target="new.example.com", scanners=["dns-scanner"], uid="u5"))
+        self.assertTrue(self.index.is_target("new.example.com"))
+        self.assertEqual(self.lister.calls, 2)
+        self.assertEqual([o["uid"] for o in self.index.owners("dns-scanner", "new.example.com")], ["u5"])
+        self.assertEqual(self.lister.calls, 2, "a hit does not re-list")
+
+    def test_a_miss_re_lists_at_most_once_per_interval(self):
+        self.index.is_target(TARGET)
+        for _ in range(50):
+            self.assertFalse(self.index.is_target("evil.example.com"))
+        self.assertEqual(self.lister.calls, 2, "fifty misses within a second cost one list")
+        self.clock.advance(1)
+        self.assertFalse(self.index.is_target("evil.example.com"))
+        self.assertEqual(self.lister.calls, 3)
+
+    def test_allows_re_lists_on_a_miss_too(self):
+        self.index.is_target(TARGET)
+        tenant = scanner_object(name="tls-t", target="tenant.example.com", uid="u6")
+        tenant["spec"]["samma_io_id"] = "tenant-t"
+        self.lister.items.append(tenant)
+        self.assertTrue(self.index.allows("tenant.example.com", "tenant-t"))
+
+    def test_a_miss_before_the_first_list_does_not_re_list(self):
+        lister = ListerSpy(fail=True)
+        index = ScannerIndex(lister, clock=self.clock)
+        self.assertFalse(index.is_target(TARGET))
+        self.assertEqual(lister.calls, 1, "the failed list is retried after ttl, not on every miss")
+
 
 if __name__ == "__main__":
     unittest.main()

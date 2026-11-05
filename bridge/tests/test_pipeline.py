@@ -170,6 +170,19 @@ class DropTests(unittest.TestCase):
         self.assertEqual(h.metrics.dropped.value("unknown-target"), 2)
         self.assertEqual(len(h.pipeline.accumulator), 0)
 
+    def test_first_scan_of_a_new_scanner_reaches_its_report(self):
+        """ankra-2t6igm.14, seen in the k3d e2e: a Scanner created a few
+        seconds after the bridge listed Scanners lost its first scan."""
+        h = PipelineHarness(scanners=[])
+        h.feed(run(target="unrelated.example.com", findingCount=0))  # the bridge has listed: no Scanners
+        h.clock.advance(5)
+        h.store.scanners.append(scanner_object(uid="u1"))
+        h.feed(finding(), run(findingCount=1))
+        h.clock.advance(31)
+        h.tick()
+        self.assertIsNotNone(h.report, "the first run of the new Scanner was dropped")
+        self.assertEqual(h.metrics.dropped.value("unknown-target"), 1, "only the unrelated message is dropped")
+
     def test_messages_are_dropped_until_the_scanner_list_loads(self):
         h = PipelineHarness()
         h.store.list_scanners = lambda: (_ for _ in ()).throw(RuntimeError("down"))
