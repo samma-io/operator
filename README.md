@@ -335,6 +335,27 @@ namespace you create yourself needs the same labels applied by hand. One trade-o
 `scanners.nmapRawSockets=true` adds `NET_RAW`, which baseline enforce rejects — such nmap pods are
 not scheduled until you relax the namespace's enforce label.
 
+### Allowed scanners
+
+`scanners.allowed` (`SAMMA_ALLOWED_SCANNERS`) lists the scanners the operator may run, by name.
+Empty, the default, allows every scanner. The list is checked where a Scanner becomes Jobs and
+CronJobs, so it holds for every way of asking: a Scanner made by hand, an Ingress's `profile`
+annotation and its `scanners` annotation alike.
+
+- A scanner outside the list is skipped and the Scanner gets a `ScannerNotAllowed` event.
+- A Scanner left with no allowed scanner is refused, and its CronJobs are deleted.
+- When the operator starts with a narrower list, it deletes the CronJobs of Scanners that are now
+  refused, drops the CronJobs of refused scanners from the others, and deletes, instead of
+  resuming, a waiting scheduled Job of a refused scanner.
+
+Use it where some scans are not acceptable. Several cloud providers forbid port scanning from
+their network even against your own addresses; there, allow only the passive scanners:
+
+```yaml
+scanners:
+  allowed: [tls-scanner, http-headers-scanner, http-redirect-scanner, dns-scanner, whois-scanner]
+```
+
 ### Concurrency and scheduling
 
 A Scanner's first Jobs go through a queue. At most `scanners.maxConcurrentScans` scan Jobs
@@ -927,6 +948,7 @@ curl -X DELETE http://localhost:8080/scanner \
 | `SAMMA_IO_PROFILE_ID` | — | Profile ID sent to external API |
 | `SAMMA_ALLOW_PRIVATE_TARGETS` | `false` | `true` lets a target resolve to a private, loopback, link-local, multicast or carrier-grade NAT address. See [Target validation](#target-validation). |
 | `SAMMA_ALLOW_UNMANAGED_TARGETS` | `true` | `false` refuses a Scanner whose target is not the host of an Ingress in the cluster. |
+| `SAMMA_ALLOWED_SCANNERS` | empty | Comma-separated scanners the operator may run; empty allows every scanner. See [Allowed scanners](#allowed-scanners). |
 | `SAMMA_INGRESS_NAMESPACES` | empty | Comma-separated extra namespaces whose Ingresses are handled (` shop , ,api ` parses to `shop`, `api`); `*` restores every namespace, the behaviour before this restriction. The operator's own namespace is always handled. See [Ingress annotations](#ingress-annotations). |
 | `SAMMA_NAMESPACE` | `samma-io` | The namespace Scanners, Jobs and CronJobs live in. The chart sets it from the pod's namespace. |
 | `SAMMA_SCANNER_SERVICE_ACCOUNT` | `samma-scanner` | ServiceAccount of scanner pods. |
@@ -1088,6 +1110,7 @@ kubectl delete crd scanner.samma.io scanreports.samma.io   # Helm leaves CRDs in
 | `scanners.pullPolicy` | `IfNotPresent` | `imagePullPolicy` of scanner containers |
 | `scanners.resources` | 100m/128Mi requests, 1/512Mi limits | Resources of every scanner container |
 | `scanners.maxConcurrentScans` | `2` | Scan Jobs allowed to run at the same time, scheduled runs included |
+| `scanners.allowed` | `[]` (every scanner) | Scanners the operator may run, see [Allowed scanners](#allowed-scanners) |
 | `scanners.defaultSchedule` | `""` (weekly, `0 0 * * 0`) | Schedule of Scanners that set none, see [Concurrency and scheduling](#concurrency-and-scheduling) |
 | `scanners.scanDeadlineSeconds` | `900` | `activeDeadlineSeconds` of scan Jobs |
 | `scanners.ttlSecondsAfterFinished` | `3600` | When finished Jobs are removed |

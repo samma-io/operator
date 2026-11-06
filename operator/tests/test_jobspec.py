@@ -64,6 +64,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(s.resources, jobspec.DEFAULT_RESOURCES)
         self.assertEqual(s.default_schedule, "0 0 * * 0")
         self.assertFalse(s.legacy_base_scanner)
+        self.assertIsNone(s.allowed_scanners)
 
     def test_values_from_environment(self):
         s = jobspec.Settings.from_env({
@@ -119,6 +120,53 @@ class SettingsTests(unittest.TestCase):
         for value in ("none", "", "  ", "weekly", "0 0 * *", "0 0 * * 0; rm", "@reboot"):
             with self.subTest(value=value):
                 self.assertEqual(jobspec.Settings.from_env({"SAMMA_IO_WEEKLY_SCHEDULE": value}).default_schedule, "0 0 * * 0")
+
+
+PASSIVE = "tls-scanner,http-headers-scanner,http-redirect-scanner,dns-scanner,whois-scanner"
+
+
+class AllowedScannersTests(unittest.TestCase):
+    def test_unset_or_empty_allows_every_scanner(self):
+        for env in ({}, {"SAMMA_ALLOWED_SCANNERS": ""}, {"SAMMA_ALLOWED_SCANNERS": " , ,"}):
+            with self.subTest(env=env):
+                s = jobspec.Settings.from_env(env)
+                self.assertIsNone(s.allowed_scanners)
+                for name in jobspec.SCANNERS:
+                    self.assertTrue(jobspec.scanner_allowed(name, s), name)
+
+    def test_list_is_parsed_and_trimmed(self):
+        s = jobspec.Settings.from_env({"SAMMA_ALLOWED_SCANNERS": " tls-scanner , dns-scanner,"})
+        self.assertEqual(s.allowed_scanners, frozenset({"tls-scanner", "dns-scanner"}))
+
+    def test_passive_list_refuses_every_active_scanner(self):
+        s = jobspec.Settings.from_env({"SAMMA_ALLOWED_SCANNERS": PASSIVE})
+        for name in PASSIVE.split(","):
+            self.assertTrue(jobspec.scanner_allowed(name, s), name)
+        for name in ("port-scanner", "ssh-banner-scanner", "traceroute-scanner", "nmap", "nikto", "tsunami", "base"):
+            self.assertFalse(jobspec.scanner_allowed(name, s), name)
+
+    def test_split_keeps_allowed_runs_and_names_refused_scanners_once(self):
+        s = jobspec.Settings.from_env({"SAMMA_ALLOWED_SCANNERS": PASSIVE})
+        runs, unknown = jobspec.resolve_runs(["tls-scanner", "port-scanner", "nmap", "dns-scanner", "nmap/http"])
+        self.assertEqual(unknown, [])
+        kept, refused = jobspec.split_allowed(runs, s)
+        self.assertEqual([spec.name for spec, _ in kept], ["tls-scanner", "dns-scanner"])
+        # nmap brings three variants plus nmap/http again; it is named once.
+        self.assertEqual(refused, ["port-scanner", "nmap"])
+
+    def test_split_with_nothing_allowed_returns_no_runs(self):
+        s = jobspec.Settings.from_env({"SAMMA_ALLOWED_SCANNERS": "tls-scanner"})
+        runs, _ = jobspec.resolve_runs(["port-scanner", "traceroute-scanner"])
+        kept, refused = jobspec.split_allowed(runs, s)
+        self.assertEqual(kept, [])
+        self.assertEqual(refused, ["port-scanner", "traceroute-scanner"])
+
+    def test_split_without_a_list_changes_nothing(self):
+        s = jobspec.Settings.from_env({})
+        runs, _ = jobspec.resolve_runs(["port-scanner", "nmap"])
+        kept, refused = jobspec.split_allowed(runs, s)
+        self.assertEqual(kept, runs)
+        self.assertEqual(refused, [])
 
 
 class ResolveRunsTests(unittest.TestCase):

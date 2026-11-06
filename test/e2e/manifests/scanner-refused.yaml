@@ -1,0 +1,11 @@
+# A Scanner that asks only for port-scanner, which values.yaml's
+# scanners.allowed leaves out: step 7 expects a ScannerNotAllowed event and
+# no Job or CronJob for it.
+apiVersion: samma.io/v1
+kind: Scanner
+metadata:
+  name: e2e-refused
+  namespace: samma-io
+spec:
+  target: example.com
+  scanners: ["port-scanner"]

@@ -15,9 +15,11 @@
 #   6. The CronJob's jobTemplate is suspended; a Job made from it starts
 #      suspended, the operator's queue resumes it, it completes and its run
 #      reaches the ScanReport.
-#   7. Deleting the Ingress leaves no Job, CronJob, Scanner, ScanReport or
+#   7. A Scanner that asks only for a scanner outside scanners.allowed gets
+#      a ScannerNotAllowed event and no Job or CronJob.
+#   8. Deleting the Ingress leaves no Job, CronJob, Scanner, ScanReport or
 #      scanner pod behind.
-#   8. helm uninstall completes with a Scanner still present, its pre-delete
+#   9. helm uninstall completes with a Scanner still present, its pre-delete
 #      hook removes it, and nothing is left.
 #
 # It creates and deletes things cluster-wide, so it refuses to run unless the
@@ -341,7 +343,26 @@ wait_job_complete "$MANUAL_JOB" 300
 wait_for_run 180 "$MANUAL_JOB-"
 
 # ---------------------------------------------------------------------------
-log "7. Deleting the Ingress removes everything it caused"
+log "7. A scanner outside scanners.allowed is refused"
+# ---------------------------------------------------------------------------
+
+# values.yaml allows dns-scanner only. The refusal must come from the
+# operator's own check: the Scanner is valid for the API server.
+refused_event() {
+  k get events --field-selector involvedObject.kind=Scanner,involvedObject.name=e2e-refused,reason=ScannerNotAllowed -o name | grep -q .
+}
+k apply -f "$HERE/manifests/scanner-refused.yaml" >/dev/null
+wait_until 60 "Scanner e2e-refused gets a ScannerNotAllowed event" refused_event
+# The event is posted before the handler gives up, so give it a moment to
+# have created anything it was going to.
+sleep 5
+[[ "$(count_of jobs.batch samma.io/scanner=port-scanner)" == 0 ]] || fail "a port-scanner Job exists"
+[[ "$(count_of cronjobs.batch samma.io/scanner=port-scanner)" == 0 ]] || fail "a port-scanner CronJob exists"
+pass "port-scanner was refused: ScannerNotAllowed event, no Job, no CronJob"
+k delete scanner.samma.io e2e-refused >/dev/null
+
+# ---------------------------------------------------------------------------
+log "8. Deleting the Ingress removes everything it caused"
 # ---------------------------------------------------------------------------
 
 refusals=$(podsecurity_refusals)
@@ -352,7 +373,7 @@ k delete ingress "$INGRESS" >/dev/null
 wait_nothing_left 180 "after the Ingress was deleted"
 
 # ---------------------------------------------------------------------------
-log "8. helm uninstall with a Scanner still present"
+log "9. helm uninstall with a Scanner still present"
 # ---------------------------------------------------------------------------
 
 k apply -f "$HERE/manifests/scanner-example.yaml" >/dev/null

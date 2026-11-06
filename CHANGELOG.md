@@ -5,6 +5,23 @@ A release is a tag `v<version>` on `main`. Pushing it runs
 `oci://ghcr.io/samma-io/charts/samma-operator` and the images to
 `ghcr.io/samma-io/samma-{operator,api,bridge}` (README, "Releases").
 
+## 0.2.9
+
+- `scanners.allowed` (`SAMMA_ALLOWED_SCANNERS`) limits which scanners the
+  operator runs. It is checked where every Scanner becomes Jobs and
+  CronJobs, so it holds whatever asks: a Scanner made by hand, an Ingress's
+  `profile` annotation, or its `scanners` annotation, which never went
+  through the tier ConfigMap. A refused scanner gets a `ScannerNotAllowed`
+  event and is skipped; a Scanner left with none is refused. When the
+  operator starts with a narrower list, the CronJobs of a refused Scanner are
+  deleted and the queue deletes, instead of resuming, a waiting Job of a
+  scanner that is no longer allowed. Empty, the default, allows every
+  scanner, as before. Use it where some scans are not acceptable, for
+  example a cloud provider whose terms forbid port scanning from its
+  network.
+- Scanner create and resume now delete the Scanner's CronJobs when its spec
+  is refused, as update already did.
+
 ## 0.2.8
 
 - Scan pods can reach the cluster's own ingress controller. Where the
