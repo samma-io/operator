@@ -189,6 +189,16 @@ def resume_waiting_scan_jobs(free):
         spec = job.spec.to_dict() if job.spec is not None else {}
         if not jobspec.job_suspended(spec):
             continue
+        scanner = (job.metadata.labels or {}).get(jobspec.LABEL_SCANNER)
+        if scanner and not jobspec.scanner_allowed(scanner, SETTINGS):
+            # Created before SAMMA_ALLOWED_SCANNERS narrowed: drop it, never run it.
+            try:
+                batch1api.delete_namespaced_job(job.metadata.name, NAMESPACE, propagation_policy='Background')
+                logging.info("Deleted waiting Job %s: scanner %s is not allowed", job.metadata.name, scanner)
+            except ApiException as exc:
+                if exc.status != 404:
+                    raise
+            continue
         status = job.status.to_dict() if job.status is not None else {}
         waiting.append({
             'name': job.metadata.name,
@@ -475,7 +485,13 @@ def validate_scanner(body, retry):
     runs, unknown = jobspec.resolve_runs(scanners, templates)
     for name in unknown:
         kopf.warn(body, reason='UnknownScanner', message="Scanner {0!r} is not known to this operator and was skipped".format(name))
+    runs, refused = jobspec.split_allowed(runs, SETTINGS)
+    for name in refused:
+        kopf.warn(body, reason='ScannerNotAllowed',
+                  message="Scanner {0!r} is not in this operator's allowed scanners (SAMMA_ALLOWED_SCANNERS) and was skipped".format(name))
     if not runs:
+        if refused:
+            raise kopf.PermanentError("none of the requested scanners {0} is allowed on this operator".format(scanners))
         raise kopf.PermanentError("none of the requested scanners {0} is known".format(scanners))
     if not SETTINGS.legacy_base_scanner and any(spec.name == 'base' for spec, _ in runs):
         kopf.warn(body, reason='LegacyScanner',
@@ -516,6 +532,29 @@ def build_scanner_objects(body, retry):
 def list_owned_cronjobs(uid):
     selector = "{0}={1}".format(jobspec.LABEL_SCANNER_UID, uid)
     return batch1api.list_namespaced_cron_job(NAMESPACE, label_selector=selector).items
+
+
+def delete_owned_cronjobs(uid):
+    """Delete every CronJob this Scanner created. Used when its spec is
+    refused, so nothing keeps running against it."""
+    for existing in list_owned_cronjobs(uid):
+        try:
+            batch1api.delete_namespaced_cron_job(existing.metadata.name, NAMESPACE, propagation_policy='Background')
+            logging.info("Deleted CronJob %s (Scanner spec refused)", existing.metadata.name)
+        except ApiException as exc:
+            if exc.status != 404:
+                raise
+
+
+def build_or_clear(body, retry):
+    """build_scanner_objects, but a refused spec first deletes the CronJobs
+    this Scanner made earlier (an operator restarted with a narrower
+    SAMMA_ALLOWED_SCANNERS must not leave them on their schedule)."""
+    try:
+        return build_scanner_objects(body, retry)
+    except kopf.PermanentError:
+        delete_owned_cronjobs(body['metadata']['uid'])
+        raise
 
 
 def reconcile_cronjobs(body, cronjobs):
@@ -569,7 +608,7 @@ def submit_jobs(body, jobs, patch):
 
 @kopf.on.create(GROUP, VERSION, PLURAL)
 def create_fn(body, retry, patch, **kwargs):
-    jobs, cronjobs = build_scanner_objects(body, retry)
+    jobs, cronjobs = build_or_clear(body, retry)
     reconcile_cronjobs(body, cronjobs)
     submit_jobs(body, jobs, patch)
     logging.info("Scanner %s: %d scanners against %s", body['metadata']['name'], len(jobs), body['spec'].get('target'))
@@ -582,7 +621,7 @@ def resume_fn(body, retry, patch, **kwargs):
     unchanged ones are left alone) and re-queue the first Jobs of Scanners
     that were still waiting for a slot. Jobs that exist already are adopted,
     not repeated."""
-    jobs, cronjobs = build_scanner_objects(body, retry)
+    jobs, cronjobs = build_or_clear(body, retry)
     reconcile_cronjobs(body, cronjobs)
     annotations = body['metadata'].get('annotations') or {}
     if annotations.get(jobspec.ANNOTATION_INITIAL_SCAN) != jobspec.INITIAL_SCAN_QUEUED:
@@ -593,18 +632,8 @@ def resume_fn(body, retry, patch, **kwargs):
 @kopf.on.update(GROUP, VERSION, PLURAL, field='spec')
 def update_fn(body, retry, **kwargs):
     """A changed spec recreates the CronJobs. The first Job is not run again."""
-    uid = body['metadata']['uid']
-    try:
-        _, cronjobs = build_scanner_objects(body, retry)
-    except kopf.PermanentError:
-        # The new spec is rejected: nothing may keep running against it.
-        for existing in list_owned_cronjobs(uid):
-            try:
-                batch1api.delete_namespaced_cron_job(existing.metadata.name, NAMESPACE, propagation_policy='Background')
-            except ApiException as exc:
-                if exc.status != 404:
-                    raise
-        raise
+    # A rejected spec deletes the CronJobs: nothing may keep running against it.
+    _, cronjobs = build_or_clear(body, retry)
     reconcile_cronjobs(body, cronjobs)
 
 

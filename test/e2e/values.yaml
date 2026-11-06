@@ -29,3 +29,7 @@ api:
 # security"). The bridge then writes ScanReports only.
 timescaledb:
   enabled: false
+# Step 7 checks that a scanner outside this list is refused. Every other
+# step uses dns-scanner only.
+scanners:
+  allowed: [dns-scanner]

@@ -51,6 +51,11 @@ jobs:
             --set-json 'networkPolicies.ingressControllers=[]' > /dev/null
           helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
             --set-json 'networkPolicies.ingressControllers=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"haproxy"}},"ports":[80,443]}]' > /dev/null
+          # scanners.allowed reaches the operator as SAMMA_ALLOWED_SCANNERS; empty by default.
+          helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
+            --set-json 'scanners.allowed=["tls-scanner","dns-scanner"]' | grep -A1 'name: SAMMA_ALLOWED_SCANNERS' | grep -q 'value: "tls-scanner,dns-scanner"'
+          helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
+            | grep -A1 'name: SAMMA_ALLOWED_SCANNERS' | grep -q 'value: ""'
           # An entry without ports must be refused.
           if helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
             --set-json 'networkPolicies.ingressControllers=[{"podSelector":{"matchLabels":{"a":"b"}}}]' > /dev/null 2>&1; then

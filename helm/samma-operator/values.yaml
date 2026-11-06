@@ -101,6 +101,15 @@ scanners:
   # mounts the filebeat and live ConfigMaps. true creates them at startup;
   # nothing else uses them, and the detect scanners publish to NATS.
   legacyBaseScanner: false
+  # Scanners this operator may run, by name (tls-scanner, port-scanner,
+  # nmap, nikto, ...). Empty allows every scanner. A Scanner that asks for
+  # any other one, made by hand or from an Ingress's profile or scanners
+  # annotation, gets a ScannerNotAllowed event and that scanner is skipped;
+  # its CronJobs and waiting Jobs are deleted when the operator starts with
+  # the narrower list. Use it where some scans are not acceptable, for
+  # example on a provider whose terms forbid port scanning from its network:
+  #   allowed: [tls-scanner, http-headers-scanner, http-redirect-scanner, dns-scanner, whois-scanner]
+  allowed: []
   # Requests and limits of every scanner container.
   resources:
     requests:

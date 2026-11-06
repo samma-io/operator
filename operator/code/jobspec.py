@@ -86,6 +86,10 @@ ENV_NATS_SCANNER_USER = "SAMMA_NATS_SCANNER_USER"
 # Create the filebeat and live ConfigMaps the legacy base scanner mounts.
 # Off by default: the detect scanners publish to NATS and need neither.
 ENV_LEGACY_BASE_SCANNER = "SAMMA_LEGACY_BASE_SCANNER"
+# Comma separated scanner names this operator may run. Empty or unset is
+# every known scanner, as before. A Scanner that asks for any other one
+# gets a ScannerNotAllowed event and that scanner is skipped.
+ENV_ALLOWED_SCANNERS = "SAMMA_ALLOWED_SCANNERS"
 
 DEFAULT_NAMESPACE = "samma-io"
 DEFAULT_SCANNER_SERVICE_ACCOUNT = "samma-scanner"
@@ -143,6 +147,7 @@ class Settings(object):
         nats_secret="",
         nats_scanner_user=DEFAULT_NATS_SCANNER_USER,
         legacy_base_scanner=False,
+        allowed_scanners=None,
     ):
         self.namespace = namespace
         self.scanner_service_account = scanner_service_account
@@ -161,6 +166,8 @@ class Settings(object):
         self.nats_secret = (nats_secret or "").strip()
         self.nats_scanner_user = (nats_scanner_user or "").strip() or DEFAULT_NATS_SCANNER_USER
         self.legacy_base_scanner = bool(legacy_base_scanner)
+        # None means every scanner is allowed.
+        self.allowed_scanners = frozenset(allowed_scanners) if allowed_scanners else None
 
     @classmethod
     def from_env(cls, environ=None):
@@ -222,6 +229,7 @@ class Settings(object):
             nats_secret=text(ENV_NATS_SECRET, ""),
             nats_scanner_user=text(ENV_NATS_SCANNER_USER, DEFAULT_NATS_SCANNER_USER),
             legacy_base_scanner=flag(ENV_LEGACY_BASE_SCANNER, False),
+            allowed_scanners=parse_allowed_scanners(env.get(ENV_ALLOWED_SCANNERS)),
         )
 
 
@@ -390,6 +398,33 @@ SCANNERS["base"] = ScannerSpec(
     sidecars=_filebeat_sidecar,
     volumes=_BASE_VOLUMES,
 )
+
+
+def parse_allowed_scanners(raw):
+    """SAMMA_ALLOWED_SCANNERS to a frozenset of scanner names, or None when
+    it is unset or lists nothing (every scanner allowed)."""
+    if raw is None:
+        return None
+    names = frozenset(name.strip() for name in raw.split(",") if name.strip())
+    return names or None
+
+
+def scanner_allowed(name, settings):
+    """True when settings allow the scanner called name to run."""
+    return settings.allowed_scanners is None or name in settings.allowed_scanners
+
+
+def split_allowed(runs, settings):
+    """Split resolve_runs output into (runs settings allow, names of the
+    scanners they refuse, in request order without repeats)."""
+    kept = []
+    refused = []
+    for spec, variant in runs:
+        if scanner_allowed(spec.name, settings):
+            kept.append((spec, variant))
+        elif spec.name not in refused:
+            refused.append(spec.name)
+    return kept, refused
 
 
 def split_scanner_name(raw):
