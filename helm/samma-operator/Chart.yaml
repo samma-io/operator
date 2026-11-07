@@ -4,8 +4,8 @@ description: Kubernetes operator that runs security scanners against the hosts y
 type: application
 # version and appVersion move together: a release is a tag v<version>, and
 # the release workflow refuses a tag that does not match this file.
-version: 0.2.9
-appVersion: "0.2.9"
+version: 0.2.10
+appVersion: "0.2.10"
 kubeVersion: ">=1.25.0"
 home: https://samma.io
 sources:
@@ -32,5 +32,5 @@ annotations:
       displayName: ScanReport
       description: The findings of one scanner against one target.
   artifacthub.io/changes: |
-    - kind: added
-      description: scanners.allowed (SAMMA_ALLOWED_SCANNERS) limits which scanners the operator runs, whatever a Scanner or an Ingress annotation asks for. A refused scanner gets a ScannerNotAllowed event and is skipped; a Scanner left with none is refused, and its CronJobs and waiting Jobs are deleted when the operator starts with the narrower list. Empty, the default, allows every scanner as before.
+    - kind: fixed
+      description: The bridge's /metrics, /healthz and /readyz listener and the API now listen on IPv6 as well as IPv4. On an IPv6 or IPv6-first dual-stack cluster the kubelet probes the pod's IPv6 address, which the IPv4-only listener refused, so the bridge never became ready and the Helm install timed out.

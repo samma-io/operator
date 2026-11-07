@@ -3,6 +3,7 @@ HTTP endpoint from the standard library. prometheus_client is not a
 dependency of the bridge and this is all it needs.
 """
 
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -175,11 +176,42 @@ def make_handler(registry, ready=None):
     return Handler
 
 
-def start_http_server(registry, port, host="0.0.0.0", ready=None):
+class _IPv6HTTPServer(ThreadingHTTPServer):
+    address_family = socket.AF_INET6
+
+
+class _DualStackHTTPServer(_IPv6HTTPServer):
+    """Listens on "::" with IPV6_V6ONLY off, so IPv4 clients arrive as
+    IPv4-mapped addresses on the same socket."""
+
+    def server_bind(self):
+        self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        super().server_bind()
+
+
+def _make_server(host, port, handler):
+    if host is None:
+        # Every address of both families. A pod's address is IPv6 on an
+        # IPv6 or IPv6-first dual-stack cluster, and the kubelet probes that
+        # address: a "0.0.0.0" listener refuses it and the pod never gets
+        # ready. Without IPv6 in the kernel (ipv6.disable=1) the AF_INET6
+        # socket cannot be made, and IPv4 is all there is.
+        if socket.has_ipv6:
+            try:
+                return _DualStackHTTPServer(("::", port), handler)
+            except OSError:
+                pass
+        return ThreadingHTTPServer(("0.0.0.0", port), handler)
+    if ":" in host:
+        return _IPv6HTTPServer((host, port), handler)
+    return ThreadingHTTPServer((host, port), handler)
+
+
+def start_http_server(registry, port, host=None, ready=None):
     """Serve /metrics, /healthz and /readyz in a daemon thread. Returns the
     server; its server_address tells the port that was bound (useful with
-    port 0 in tests)."""
-    server = ThreadingHTTPServer((host, int(port)), make_handler(registry, ready))
+    port 0 in tests). host None listens on every IPv4 and IPv6 address."""
+    server = _make_server(host, int(port), make_handler(registry, ready))
     server.daemon_threads = True
     thread = threading.Thread(target=server.serve_forever, name="samma-bridge-metrics", daemon=True)
     thread.start()
