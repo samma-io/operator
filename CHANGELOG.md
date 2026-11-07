@@ -5,6 +5,19 @@ A release is a tag `v<version>` on `main`. Pushing it runs
 `oci://ghcr.io/samma-io/charts/samma-operator` and the images to
 `ghcr.io/samma-io/samma-{operator,api,bridge}` (README, "Releases").
 
+## 0.2.10
+
+- The bridge's `/metrics`, `/healthz` and `/readyz` listener now takes IPv6
+  as well as IPv4. It listened on `0.0.0.0`, which in Python is IPv4 only. On
+  an IPv6 or IPv6-first dual-stack cluster a pod's address is IPv6 and the
+  kubelet probes that address, so the readiness probe was refused, the
+  bridge never became ready and a Helm install with `--wait` timed out. It
+  now listens on `::` with IPv4-mapped addresses, falling back to `0.0.0.0`
+  when the kernel has no IPv6. Found on an Ankra Cloud k3s cluster.
+- The API's gunicorn binds `[::]:8080` when the kernel has IPv6, for the
+  same reason. NATS was not affected: Go listens on both families for
+  `0.0.0.0`.
+
 ## 0.2.9
 
 - `scanners.allowed` (`SAMMA_ALLOWED_SCANNERS`) limits which scanners the

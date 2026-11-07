@@ -1,5 +1,6 @@
 """The metrics endpoint and the environment settings."""
 
+import socket
 import unittest
 import urllib.request
 
@@ -45,6 +46,40 @@ class MetricsTests(unittest.TestCase):
         for name in ("samma_bridge_messages_received_total", "samma_bridge_messages_rejected_total", "samma_bridge_reports_written_total",
                      "samma_bridge_finalize_seconds_count", "samma_bridge_runs_pending", "samma_bridge_db_rows_total"):
             self.assertIn(name, text)
+
+    def _ipv6_loopback(self):
+        if not socket.has_ipv6:
+            self.skipTest("no IPv6 in this Python")
+        try:
+            probe = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+            probe.bind(("::1", 0))
+            probe.close()
+        except OSError:
+            self.skipTest("no IPv6 loopback here")
+
+    def test_default_listens_on_ipv4_and_ipv6(self):
+        # The kubelet probes the pod's own address, which is IPv6 on an
+        # IPv6-first cluster; a "0.0.0.0" listener refuses it (seen on an
+        # Ankra Cloud k3s cluster: the bridge never became ready).
+        self._ipv6_loopback()
+        server = metrics.start_http_server(metrics.BridgeMetrics().registry, 0, ready=lambda: True)
+        try:
+            port = server.server_address[1]
+            for url in ("http://127.0.0.1:{0}/readyz", "http://[::1]:{0}/readyz"):
+                self.assertEqual(urllib.request.urlopen(url.format(port), timeout=5).status, 200, url)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_explicit_ipv6_host(self):
+        self._ipv6_loopback()
+        server = metrics.start_http_server(metrics.BridgeMetrics().registry, 0, host="::1", ready=lambda: True)
+        try:
+            port = server.server_address[1]
+            self.assertEqual(urllib.request.urlopen("http://[::1]:{0}/healthz".format(port), timeout=5).status, 200)
+        finally:
+            server.shutdown()
+            server.server_close()
 
     def test_http_server(self):
         bm = metrics.BridgeMetrics()
