@@ -683,8 +683,8 @@ Once it has a token:
 - samma.io adds **external scanners** to that target, for an outside-in baseline;
 - Ingresses tagged with `compliance` get the matching **validated vendor scanner**, such as a PCI
   DSS ASV. Vendors are connected on the samma.io side, so the cluster needs no vendor accounts;
-- results come back to the same targets, so they show up in your Grafana and the samma.io
-  dashboard.
+- results come back to the same targets, so they show up in the samma.io dashboard, and, with the
+  [collector](#collector), as Prometheus metrics and log lines in this cluster.
 
 These map to the `SAMMA_IO_API_URL`, `SAMMA_IO_API_TOKEN` and `SAMMA_IO_PROFILE_ID`
 [environment variables](#environment-variables).
@@ -692,6 +692,157 @@ These map to the `SAMMA_IO_API_URL`, `SAMMA_IO_API_TOKEN` and `SAMMA_IO_PROFILE_
 Note the difference between the two tokens: `SAMMA_IO_API_TOKEN` is outbound — it authenticates
 this operator to samma.io — while `SAMMA_API_TOKEN` is inbound — it is the bearer token callers of
 this operator's own REST API must send, and the API exits at startup without one.
+
+---
+
+## Collector
+
+The collector brings samma.io's results for this cluster's hosts back into the cluster. Every
+`collector.pollIntervalSeconds` (default 300) it:
+
+1. lists the cluster's Ingresses and keeps the hosts the operator scans: the `enable` annotation
+   present and not `"false"`, the Ingress in the release namespace or in `ingress.watchNamespaces`,
+   wildcard hosts left out;
+2. pages through `GET /api/v1/targets` on samma.io and keeps the targets whose value is one of
+   those hosts. Other targets of your organisation are not exported;
+3. reads `GET /api/v1/targets/<id>/results` for each one, which returns the latest run of every
+   scanner and its findings.
+
+It exposes the results on `:9100/metrics`, through the Service `samma-collector`:
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `samma_findings` | `target`, `scanner`, `severity` | Findings of the latest run (`CRITICAL` … `INFO`, zero-filled; `UNKNOWN` for legacy rows) |
+| `samma_scan_last_finished_timestamp_seconds` | `target`, `scanner` | When that run finished |
+| `samma_scan_outcome` | `target`, `scanner`, `outcome` | 1 for the run's outcome (`succeeded`, `failed`, `timed_out`, `unknown`) |
+| `samma_target_info` | `target`, `target_id`, `scanner_status`, `reachability` | 1 per matched samma.io target |
+| `samma_collector_polls_total` | `result` | `ok`, `auth` (token refused), `http`, `network`, `kube` (Ingress listing failed), `config`, `error` |
+| `samma_collector_last_success_timestamp_seconds` | | Last successful poll |
+| `samma_collector_targets`, `samma_collector_unmatched_hosts` | | Hosts with and without a samma.io target |
+| `samma_collector_findings_logged_total`, `samma_collector_results_truncated_total` | | Log lines written; fetches that hit the 500-finding limit |
+
+A failed poll keeps the previous values. A target that goes away loses its series on the next
+successful poll.
+
+It also writes one JSON line per finding of each new run to stdout, for Loki or any log shipper:
+
+```json
+{"event":"samma.finding","target":"app.example.com","scanner":"tls-scanner","runId":"…","severity":"HIGH","checkId":"TLS-OLD-PROTOCOL","title":"…","host":"app.example.com","port":"443","time":"…"}
+```
+
+`evidence` and `remediation` are never logged. Evidence can hold what a scanner saw, credentials
+included. The collector remembers which runs it has logged in memory only, so after a restart it
+logs the current runs once more. Its own messages go to stderr. `collector.logFindings=false` turns
+the finding lines off.
+
+Install it with a **read-only** samma.io token (Dashboard → Tokens, "read only"):
+
+```bash
+kubectl -n samma-io create secret generic samma-collector-token --from-literal=token=<read-only token>
+helm upgrade samma-operator oci://ghcr.io/samma-io/charts/samma-operator --reuse-values \
+  --set collector.enabled=true --set collector.existingSecret=samma-collector-token
+```
+
+Or use `--set collector.apiToken=<token>`, and the chart makes that Secret itself. The collector
+needs only `get` and `list` on Ingresses (ClusterRole `samma-collector`). With network policies on,
+`samma-collector` allows it DNS, the API server and `collector.egressPorts` (443).
+
+**Prometheus and Grafana.** The Service carries `prometheus.io/scrape` annotations. For the
+Prometheus Operator, set `collector.serviceMonitor.enabled=true` (plus `serviceMonitor.labels` if
+your Prometheus selects on a release label). The Grafana dashboard is
+`helm/samma-operator/dashboards/samma-findings.json` (uid `samma-findings`). Import it by hand and
+pick the Prometheus datasource, or set `collector.grafanaDashboard.enabled=true`. That renders it as
+a ConfigMap labelled `grafana_dashboard: "1"` for the kube-prometheus-stack Grafana sidecar, in
+`collector.grafanaDashboard.namespace` (the release namespace by default).
+
+### Testing the collector
+
+The whole loop, step by step, from an annotated Ingress to a Grafana panel.
+
+**1. An image.** The chart's default image tag is its `appVersion`. Releases up to 0.2.10 have no
+collector image, so pin a build until a release carries one. Every push to `main` publishes
+`ghcr.io/samma-io/samma-collector:latest` and `:sha-<short sha>`:
+
+```bash
+--set collector.tag=latest            # or sha-<short sha> for a fixed build
+```
+
+The GHCR package starts private. Make it public once (GitHub → Packages → samma-collector →
+Settings), or give the cluster a pull secret.
+
+**2. A read-only token.** On samma.io go to Dashboard → Tokens, create a token with "read only",
+and copy it (it is shown once). Use the same organisation as the operator's `config.apiToken`, so
+the Ingress hosts the operator registers are the targets this token can read.
+
+```bash
+kubectl -n samma-io create secret generic samma-collector-token --from-literal=token=<read-only token>
+```
+
+**3. Turn it on.**
+
+```bash
+helm upgrade samma-operator oci://ghcr.io/samma-io/charts/samma-operator --reuse-values \
+  --set collector.enabled=true \
+  --set collector.existingSecret=samma-collector-token \
+  --set collector.tag=latest \
+  --set collector.pollIntervalSeconds=60       # short while testing; 300 afterwards
+kubectl -n samma-io rollout status deploy/samma-collector
+kubectl -n samma-io logs deploy/samma-collector
+```
+
+The first log lines name the API URL, the interval and the Ingress namespaces. An `HTTP 401`
+means the token is wrong. A `listing Ingresses failed` means the RBAC or the
+`samma-collector` NetworkPolicy is blocking the API server (see `networkPolicies.apiServer`).
+
+**4. An Ingress to follow.** Annotate an Ingress the operator handles (README,
+[Ingress annotations](#3-ingress-annotations)):
+
+```bash
+kubectl -n samma-io annotate ingress <name> samma-io.alpha.kubernetes.io/enable=true
+```
+
+With `config.apiToken` set, the operator registers the host on samma.io. The host shows up as a
+target there, and samma.io scans it.
+
+**5. Metrics.**
+
+```bash
+kubectl -n samma-io port-forward svc/samma-collector 9100:9100 &
+curl -s localhost:9100/metrics | grep -E '^samma_(findings|collector_(targets|unmatched_hosts|polls_total))'
+```
+
+| What you see | What it means |
+|---|---|
+| `samma_collector_polls_total{result="ok"}` rising | samma.io and the Ingress listing work |
+| `samma_collector_unmatched_hosts 1` | The host is opted in but not a target on samma.io yet. Check `config.apiToken` and the operator log for `Posted target` |
+| `samma_collector_targets 1`, no `samma_findings` | The target exists but has no results yet. Wait for the first scan on samma.io |
+| `samma_findings{target="<host>",...}` | Results are in |
+
+**6. Logs.** Once a run has findings, the collector writes them as JSON lines on stdout:
+
+```bash
+kubectl -n samma-io logs deploy/samma-collector | grep '"event":"samma.finding"'
+```
+
+**7. Grafana.** For a Prometheus that scrapes by annotation, nothing more is needed. For the
+Prometheus Operator, add `--set collector.serviceMonitor.enabled=true`, plus
+`--set collector.serviceMonitor.labels.release=<your kube-prometheus-stack release>` when your
+Prometheus selects on that label. Then import `helm/samma-operator/dashboards/samma-findings.json`
+(Dashboards → New → Import) and pick the Prometheus datasource. Or let the Grafana sidecar load it
+with `--set collector.grafanaDashboard.enabled=true`, adding
+`collector.grafanaDashboard.namespace=<grafana namespace>` if the sidecar only watches its own.
+
+**Turning it off:** `--set collector.enabled=false` removes everything the collector added except
+a Secret you created yourself.
+
+For a run outside a cluster, `COLLECTOR_HOSTS=a.example.com,b.example.com` replaces the Ingress
+listing:
+
+```bash
+docker build -t samma-collector collector
+docker run --rm -p 9100:9100 -e SAMMA_IO_API_TOKEN=<token> -e COLLECTOR_HOSTS=app.example.com samma-collector
+curl -s localhost:9100/metrics | grep samma_findings
+```
 
 ---
 
@@ -989,6 +1140,20 @@ Same env vars as operator, plus the external API vars above.
 | `SCANNER_CACHE_SECONDS` | `30` | How long the list of Scanners is cached |
 | `STRAGGLER_WAIT_SECONDS` | `30` | How long a run waits for findings still in flight after its run message |
 | `RUN_IDLE_TIMEOUT_SECONDS` | `3600` | A run without a run message is dropped after this long |
+
+### Collector
+
+| Variable | Default | Description |
+|---|---|---|
+| `SAMMA_IO_API_URL` | `https://www.samma.io` | samma.io base URL |
+| `SAMMA_IO_API_TOKEN` | unset | samma.io API token; read-only is enough. Unset: `/readyz` fails and nothing is polled |
+| `POLL_INTERVAL_SECONDS` | `300` | Seconds between polls, at least 30 |
+| `REQUEST_TIMEOUT_SECONDS` | `15` | Per-request timeout |
+| `LOG_FINDINGS` | `true` | One JSON line per finding of a new run on stdout |
+| `SAMMA_NAMESPACE` | `samma-io` | The operator's namespace; its Ingresses always count |
+| `SAMMA_INGRESS_NAMESPACES` | unset | More namespaces whose Ingresses count, `*` for all (as for the operator) |
+| `COLLECTOR_HOSTS` | unset | Local runs only: these hosts instead of the Ingress listing |
+| `METRICS_PORT` | `9100` | Prometheus metrics, `/healthz` and `/readyz` |
 
 ---
 

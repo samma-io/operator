@@ -5,6 +5,18 @@ A release is a tag `v<version>` on `main`. Pushing it runs
 `oci://ghcr.io/samma-io/charts/samma-operator` and the images to
 `ghcr.io/samma-io/samma-{operator,api,bridge}` (README, "Releases").
 
+## Unreleased
+
+- New component, the **collector** (`collector/`, image `ghcr.io/samma-io/samma-collector`, chart
+  `collector.enabled`, off by default). It reads the results that samma.io holds for this cluster's
+  opted-in Ingress hosts through the read API (`/api/v1/targets`,
+  `/api/v1/targets/<id>/results`) with a read-only token. It serves them as Prometheus metrics
+  (`samma_findings{target,scanner,severity}`, last scan time, outcome, collector health) on
+  `:9100/metrics`, and writes one JSON line per finding of a new run to stdout, without evidence.
+  It comes with an optional ServiceMonitor and a Grafana dashboard
+  (`helm/samma-operator/dashboards/samma-findings.json`, optionally as a sidecar ConfigMap), and a
+  `samma-collector` NetworkPolicy. It uses the standard library only. README, "Collector".
+
 ## 0.2.10
 
 - The bridge's `/metrics`, `/healthz` and `/readyz` listener now takes IPv6

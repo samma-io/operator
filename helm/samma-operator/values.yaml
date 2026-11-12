@@ -29,6 +29,7 @@ serviceAccounts:
   api: samma-api
   bridge: samma-bridge
   scanner: samma-scanner
+  collector: samma-collector
 
 # Images. Every component takes image, tag, digest and pullPolicy:
 #   tag     empty means the chart's appVersion (the release the chart came
@@ -339,6 +340,57 @@ bridge:
     limits:
       cpu: 200m
       memory: 256Mi
+
+# Collector: pulls the results samma.io holds for this cluster's opted-in
+# Ingress hosts and exposes them as Prometheus metrics (samma_findings and
+# friends on :9100/metrics) and one JSON log line per finding on stdout
+# (README, "Collector"). Off by default. It needs a samma.io API token; a
+# read-only one is enough and is what it should get.
+collector:
+  enabled: false
+  image: ghcr.io/samma-io/samma-collector
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+  runAsUser: 1000
+  runAsGroup: 1000
+  # The samma.io API it reads. Empty: config.apiUrl.
+  apiUrl: ""
+  # The token: set apiToken (the chart puts it in the Secret
+  # samma-collector-token) or existingSecret (a Secret of your own with the
+  # key "token"). One of them is required when enabled.
+  apiToken: ""
+  existingSecret: ""
+  # Seconds between polls (minimum 30).
+  pollIntervalSeconds: 300
+  # Ports the samma-collector NetworkPolicy lets it reach samma.io on (any
+  # address: a policy cannot name a host).
+  egressPorts: [443]
+  # Write one JSON line per finding of a new run to stdout.
+  logFindings: true
+  # Service annotations prometheus.io/scrape|port|path, for a Prometheus
+  # that discovers by annotation.
+  scrapeAnnotations: true
+  # A ServiceMonitor for the Prometheus Operator (needs its CRDs).
+  serviceMonitor:
+    enabled: false
+    interval: 60s
+    labels: {}
+  # A ConfigMap carrying the Grafana dashboard, labelled for the Grafana
+  # sidecar of kube-prometheus-stack (grafana_dashboard: "1"). The
+  # dashboard is also in the chart as dashboards/samma-findings.json.
+  grafanaDashboard:
+    enabled: false
+    namespace: ""
+    labels:
+      grafana_dashboard: "1"
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
 
 # Shared scanner configuration
 config:
