@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Samma is a Kubernetes operator that deploys security scanners as Jobs and CronJobs into a cluster. When a target is registered, the operator always creates both: an immediate one-time Job and a weekly CronJob. Results are published to NATS; the bridge writes them as `ScanReport` objects (`scanreports.samma.io/v1alpha1`) and stores them in TimescaleDB.
 
-Three components: **operator** (watches CRDs, deploys scanners, records failed scan Jobs in ScanReports), **bridge** (NATS to ScanReports and TimescaleDB) and **API** (REST interface for managing targets/scanners).
+Three components: **operator** (watches CRDs, deploys scanners, records failed scan Jobs in ScanReports), **bridge** (NATS to ScanReports and TimescaleDB) and **API** (REST interface for managing targets/scanners). A fourth, the optional **collector** (`collector/`, chart `collector.enabled`, off by default), pulls samma.io's results for the cluster's opted-in Ingress hosts back as Prometheus metrics and finding log lines.
 
 ## Architecture
 
@@ -113,6 +113,10 @@ Published as OCI to `oci://ghcr.io/samma-io/charts/samma-operator` by the releas
 - Every image block has `image`, `tag`, `digest`, `pullPolicy` (`IfNotPresent`); `operator.image` is `ghcr.io/samma-io/samma-operator`, likewise `samma-api` and `samma-bridge`. Release notes carry the digests.
 - With defaults, `helm template` renders 33 objects (35 with `--include-crds`); with `api.enabled=false,timescaledb.enabled=false` it renders 22; `nats.enabled=false` removes 5 more (Deployment, Service, ConfigMap, Secret, NetworkPolicy).
 
+### Collector (`collector/`)
+
+Standard library only, like the bridge's metrics. `collector/code/collector.py` is the loop; `samma_collector/` holds `config.py` (env), `kube.py` (lists Ingresses with the pod's ServiceAccount token over urllib; `opted_in_hosts` copies the operator's opt-in rule: enable annotation present and not in `FALSE_WORDS`, own namespace or `SAMMA_INGRESS_NAMESPACES`, no wildcards; a test checks the copy against `operator_handler.py`), `dashboard.py` (samma.io read API: `GET /api/v1/targets` paged by cursor, `GET /api/v1/targets/<id>/results?limit=500`; the token never appears in an error), `poller.py` (match hosts to target values case-insensitively, newest run per scanner wins across duplicate targets, `Gauge.replace` swaps all series per poll, a failed poll keeps the old values, finding lines once per run key, never `evidence` or `remediation`) and `metrics.py` (a copy of the bridge's plus `Gauge.replace` and `CollectorMetrics`). Chart: `templates/collector.yaml` (token Secret unless `existingSecret`, ServiceAccount, read-only Ingress ClusterRole, Deployment, Service with scrape annotations, optional ServiceMonitor and Grafana dashboard ConfigMap from `dashboards/samma-findings.json`) and the `samma-collector` NetworkPolicy. Not in the raw manifest, which carries the chart's defaults. The dashboard on samma.io needs no change for it.
+
 ### CRD & Manifests (`manifest/`)
 - `manifest/samma-operator.yaml`: the chart with its defaults as plain YAML, kept by hand: namespace, the Scanner and ScanReport CRDs (identical to `helm/samma-operator/crds/`), ServiceAccounts, ClusterRole, Roles and bindings, operator Deployment + Service (8080), API Deployment + Service (8080), the NATS Secret (placeholder passwords, set them) + ConfigMap + Deployment + Service (4222), the TimescaleDB Secret (placeholder password) + PVC + Deployment + Service (5432), Bridge Deployment (metrics 9100), three NetworkPolicies. Images are the release's pinned ones (`ghcr.io/samma-io/samma-*:<version>`, detect scanners, nmap and nikto through `SAMMA_SCANNER_IMAGE_*`); bump them with `Chart.yaml`. No Helm hook: delete the Scanners by hand before deleting the manifest. No consent switch: the header says applying it is the acceptance. Releases attach a rendered copy (`samma-operator-<version>.yaml`).
 - `manifest/test/` — Example Scanner CRDs for testing.
@@ -153,6 +157,7 @@ kubectl patch configmap scanner-profiles -n samma-io --type merge \
 ```bash
 python3 -m unittest discover -s operator/tests -t operator
 python3 -m unittest discover -s bridge/tests -t bridge
+python3 -m unittest discover -s collector/tests -t collector
 ```
 No cluster, network, nats-py, asyncpg or kubernetes client needed: DNS and the Ingress listing are faked, `jobspec` builds dictionaries, `scanqueue` takes its API calls as arguments, and the bridge tests drive `samma_bridge.pipeline` with an in-memory store. `operator_handler.py` imports kopf and `bridge/code/bridge.py` imports nats-py; neither is imported by the tests; check them with `python3 -m py_compile`. CI runs both suites (`unit-tests` job in `.github/workflows/build.yaml`).
 
@@ -160,7 +165,7 @@ No cluster, network, nats-py, asyncpg or kubernetes client needed: DNS and the I
 Open in VS Code → "Reopen in Container". Provides Python 3.12, kubectl, helm, skaffold, k3d, Docker-in-Docker. Post-create script installs dependencies and creates a local k3d cluster.
 
 ### CI/CD (GitHub Actions)
-`.github/workflows/build.yaml`: runs the unit tests and `helm lint`, then builds the `operator/`, `api/` and `bridge/` images on push and PR to `main`. Pushes (push only, never from a PR) to `ghcr.io/<owner>/samma-operator`, `samma-api` and `samma-bridge` tagged with the git SHA and `latest`.
+`.github/workflows/build.yaml`: runs the unit tests and `helm lint`, then builds the `operator/`, `api/`, `bridge/` and `collector/` images on push and PR to `main`. Pushes (push only, never from a PR) to `ghcr.io/<owner>/samma-operator`, `samma-api` and `samma-bridge` tagged with the git SHA and `latest`.
 `.github/workflows/release.yaml`: on tags `v*`, see "Releases (images and chart)" above.
 `.github/workflows/e2e.yaml`: on push and PR to `main`, builds the operator, bridge and API images from the checkout, imports them into a k3d cluster and runs `test/e2e/run.sh` (README in `test/e2e/`): install into `samma-io` enforcing Pod Security `restricted` (TimescaleDB off, NetworkPolicies on), a `dns-scanner` ScanReport with outcome `succeeded` from an Ingress for `example.com`, the CRD refusing target `a.com; id`, NATS refusing anonymous and wrong-password publishes, a Job made from a CronJob starting suspended and resumed by the queue, nothing left after the Ingress is deleted, and `helm uninstall` with its pre-delete hook removing a Scanner. Only ever scan `example.com` passively there. On failure `test/e2e/diagnostics.sh` prints the objects, events and logs. Run it locally only against a throwaway k3d cluster (`E2E_KUBE_CONTEXT`).
 

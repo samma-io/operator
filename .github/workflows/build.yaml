@@ -31,8 +31,11 @@ jobs:
       - name: Bridge unit tests
         run: python3 -m unittest discover -s bridge/tests -t bridge
 
+      - name: Collector unit tests
+        run: python3 -m unittest discover -s collector/tests -t collector
+
       - name: Byte-compile every module
-        run: python3 -m compileall -q operator/code bridge/code api/code
+        run: python3 -m compileall -q operator/code bridge/code api/code collector/code
 
       - uses: azure/setup-helm@v4
 
@@ -56,6 +59,18 @@ jobs:
             --set-json 'scanners.allowed=["tls-scanner","dns-scanner"]' | grep -A1 'name: SAMMA_ALLOWED_SCANNERS' | grep -q 'value: "tls-scanner,dns-scanner"'
           helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
             | grep -A1 'name: SAMMA_ALLOWED_SCANNERS' | grep -q 'value: ""'
+          # The collector: off by default, renders with a token or an existingSecret, refuses neither.
+          helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
+            | { ! grep -q 'name: samma-collector'; }
+          helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
+            --set collector.enabled=true --set collector.apiToken=lint \
+            --set collector.serviceMonitor.enabled=true --set collector.grafanaDashboard.enabled=true > /dev/null
+          helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
+            --set collector.enabled=true --set collector.existingSecret=lint | { ! grep -q 'samma-collector-token'; }
+          if helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
+            --set collector.enabled=true > /dev/null 2>&1; then
+            echo "the collector rendered without a token"; exit 1
+          fi
           # An entry without ports must be refused.
           if helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
             --set-json 'networkPolicies.ingressControllers=[{"podSelector":{"matchLabels":{"a":"b"}}}]' > /dev/null 2>&1; then
@@ -71,7 +86,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [operator, api, bridge]
+        component: [operator, api, bridge, collector]
     steps:
       - uses: actions/checkout@v4
 
