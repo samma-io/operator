@@ -5,7 +5,7 @@ A release is a tag `v<version>` on `main`. Pushing it runs
 `oci://ghcr.io/samma-io/charts/samma-operator` and the images to
 `ghcr.io/samma-io/samma-{operator,api,bridge}` (README, "Releases").
 
-## Unreleased
+## 0.2.11
 
 - The bridge can write to a TimescaleDB outside the release:
   `bridge.externalDatabase` (`host`, `port`, `db`, `user`, `existingSecret`,
