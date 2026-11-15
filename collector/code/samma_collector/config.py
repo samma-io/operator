@@ -1,7 +1,11 @@
 """Collector settings, read from the environment once at startup."""
 
 import os
+import re
 from urllib.parse import urlsplit
+
+# The chart's clusterName and the dashboard's CLUSTER_NAME_RE (app, src/lib/clusters.ts).
+CLUSTER_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$")
 
 
 class Config(object):
@@ -17,6 +21,7 @@ class Config(object):
         ingress_namespaces=(),
         static_hosts=(),
         version="dev",
+        cluster_name="",
     ):
         self.api_url = (api_url or "").strip().rstrip("/")
         self.api_token = api_token
@@ -32,6 +37,8 @@ class Config(object):
         # Ingress listing. Empty in the chart.
         self.static_hosts = [h.strip().lower() for h in static_hosts if h.strip()]
         self.version = (version or "").strip() or "dev"
+        # Sent as X-Samma-Cluster: samma.io lists the cluster and its status.
+        self.cluster_name = (cluster_name or "").strip()
 
     def problems(self):
         """What keeps the collector from polling, as sentences; [] is fine."""
@@ -41,6 +48,8 @@ class Config(object):
         parts = urlsplit(self.api_url)
         if parts.scheme not in ("https", "http") or not parts.netloc:
             found.append("SAMMA_IO_API_URL must be an http(s) URL, got {0!r}".format(self.api_url))
+        if self.cluster_name and not CLUSTER_NAME_RE.match(self.cluster_name):
+            found.append("SAMMA_CLUSTER_NAME must be lowercase letters, digits, dots and dashes (1-63), got {0!r}".format(self.cluster_name))
         return found
 
     @classmethod
@@ -80,4 +89,5 @@ class Config(object):
             ingress_namespaces=items("SAMMA_INGRESS_NAMESPACES"),
             static_hosts=items("COLLECTOR_HOSTS"),
             version=text("SAMMA_VERSION", "dev"),
+            cluster_name=text("SAMMA_CLUSTER_NAME"),
         )

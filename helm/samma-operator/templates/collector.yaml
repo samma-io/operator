@@ -112,6 +112,7 @@ spec:
                   fieldPath: metadata.namespace
             - name: SAMMA_VERSION
               value: {{ .Chart.AppVersion | quote }}
+            {{- with include "samma.clusterNameEnv" . }}{{ . | nindent 12 }}{{- end }}
             - name: SAMMA_IO_API_URL
               value: {{ $c.apiUrl | default .Values.config.apiUrl | quote }}
             - name: SAMMA_IO_API_TOKEN

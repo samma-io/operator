@@ -9,6 +9,14 @@ acceptScanningTerms: false
 # Namespace to deploy into
 namespace: samma-io
 
+# This cluster's name on samma.io, e.g. "prod-eu" (lowercase letters, digits,
+# dots and dashes, 1-63). When set, the operator, the api and the collector
+# send it as X-Samma-Cluster on their samma.io API calls: the dashboard's
+# Clusters page lists the cluster as Ready while the collector polls, and the
+# targets the operator registers show which cluster added them. Empty sends
+# nothing.
+clusterName: ""
+
 # Create the Namespace as part of the release (the upstream default). Set to
 # false when the namespace exists already, for example when a GitOps tool or
 # `helm install --create-namespace` makes it.

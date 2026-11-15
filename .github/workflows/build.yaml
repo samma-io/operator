@@ -83,6 +83,14 @@ jobs:
             --set collector.enabled=true > /dev/null 2>&1; then
             echo "the collector rendered without a token"; exit 1
           fi
+          # clusterName reaches the operator, the api and the collector; a bad one is refused.
+          helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
+            --set clusterName=prod-eu --set collector.enabled=true --set collector.apiToken=lint \
+            | grep -c 'name: SAMMA_CLUSTER_NAME' | grep -qx 3
+          if helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
+            --set clusterName=Bad_Name > /dev/null 2>&1; then
+            echo "an invalid clusterName rendered"; exit 1
+          fi
           # An entry without ports must be refused.
           if helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
             --set-json 'networkPolicies.ingressControllers=[{"podSelector":{"matchLabels":{"a":"b"}}}]' > /dev/null 2>&1; then

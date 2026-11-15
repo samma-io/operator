@@ -14,9 +14,11 @@ TOKEN = "s3cret-token"
 
 class Handler(BaseHTTPRequestHandler):
     seen = []
+    cluster_headers = []
 
     def do_GET(self):
         Handler.seen.append((self.path, self.headers.get("Authorization")))
+        Handler.cluster_headers.append((self.headers.get("X-Samma-Cluster"), self.headers.get("X-Samma-Version")))
         if self.headers.get("Authorization") != "Bearer " + TOKEN:
             return self._json(401, {"error": "Unauthorized"})
         parts = urlsplit(self.path)
@@ -54,6 +56,12 @@ class DashboardTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
+
+    def test_cluster_headers(self):
+        Handler.cluster_headers.clear()
+        Dashboard(self.url, TOKEN, version="0.2.12", cluster="v2").results("t1")
+        Dashboard(self.url, TOKEN, version="0.2.12").results("t1")
+        self.assertEqual(Handler.cluster_headers, [("v2", "0.2.12"), (None, None)])
 
     def test_pages_targets(self):
         client = Dashboard(self.url, TOKEN)
