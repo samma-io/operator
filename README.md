@@ -710,11 +710,18 @@ everything in a test namespace and see whether it holds.
 Give the operator a samma.io API token (create one under **Dashboard → Tokens**):
 
 ```bash
-helm upgrade samma-operator helm/samma-operator --reuse-values \
+helm upgrade samma-operator helm/samma-operator --reset-then-reuse-values \
   --set config.apiUrl=https://www.samma.io \
   --set config.apiToken=<token> \
   --set config.profileId=<profile id, optional>
 ```
+
+Upgrade with `--reset-then-reuse-values` (Helm 3.14 or later), not `--reuse-values`. Both keep
+the values you set before, but `--reuse-values` also skips the chart's defaults for keys that are
+new in this version. An upgrade that turns on a new block, such as `collector.enabled=true`
+from 0.2.11, then fails to render with `nil pointer evaluating interface {}.enabled`. On an older
+Helm, pass your values back instead: `helm get values samma-operator > values.yaml` and
+`helm upgrade … -f values.yaml --set …`.
 
 Once it has a token:
 
@@ -802,7 +809,7 @@ Install it with a **read-only** samma.io token (Dashboard → Tokens, "read only
 
 ```bash
 kubectl -n samma-io create secret generic samma-collector-token --from-literal=token=<read-only token>
-helm upgrade samma-operator oci://ghcr.io/samma-io/charts/samma-operator --reuse-values \
+helm upgrade samma-operator oci://ghcr.io/samma-io/charts/samma-operator --reset-then-reuse-values \
   --set collector.enabled=true --set collector.existingSecret=samma-collector-token
 ```
 
@@ -844,7 +851,7 @@ kubectl -n samma-io create secret generic samma-collector-token --from-literal=t
 **3. Turn it on.**
 
 ```bash
-helm upgrade samma-operator oci://ghcr.io/samma-io/charts/samma-operator --reuse-values \
+helm upgrade samma-operator oci://ghcr.io/samma-io/charts/samma-operator --reset-then-reuse-values \
   --set collector.enabled=true \
   --set collector.existingSecret=samma-collector-token \
   --set collector.tag=latest \
@@ -1521,14 +1528,14 @@ To import a dashboard through the Grafana UI instead of using the script: **Dash
 ## Build & push images
 
 Images are built by GitHub Actions: `.github/workflows/build.yaml` on every push to `main`
-(`ghcr.io/samma-io/samma-{operator,api,bridge}` tagged `sha-<short sha>` and `latest`) and
+(`ghcr.io/samma-io/samma-{operator,api,bridge,collector}` tagged `sha-<short sha>` and `latest`) and
 `.github/workflows/release.yaml` on every tag `v*` (see [Releases](#releases)). To try a build of
 your own on a development cluster:
 
 ```bash
 docker build -t ghcr.io/<you>/samma-operator:dev ./operator/
 docker push ghcr.io/<you>/samma-operator:dev
-helm upgrade samma oci://ghcr.io/samma-io/charts/samma-operator --version 0.2.0 --reuse-values \
+helm upgrade samma oci://ghcr.io/samma-io/charts/samma-operator --version 0.2.0 --reset-then-reuse-values \
   --set operator.image=ghcr.io/<you>/samma-operator --set operator.tag=dev
 ```
 
