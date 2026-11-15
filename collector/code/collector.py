@@ -47,12 +47,12 @@ def make_hosts(config):
 def main():
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     config = Config.from_env()
-    metrics = CollectorMetrics(version=config.version)
+    metrics = CollectorMetrics(version=config.version, cluster=config.cluster_name)
     problems = config.problems()
     start_http_server(metrics.registry, config.metrics_port, ready=lambda: not problems)
     log.info(
-        "samma collector %s: polling %s every %ds, Ingress namespaces %s, finding logs %s",
-        config.version, config.api_url, config.poll_interval_seconds,
+        "samma collector %s (cluster %s): polling %s every %ds, Ingress namespaces %s, finding logs %s",
+        config.version, config.cluster_name or "unnamed", config.api_url, config.poll_interval_seconds,
         ", ".join([config.namespace] + config.ingress_namespaces), "on" if config.log_findings else "off",
     )
 
@@ -62,7 +62,10 @@ def main():
 
     poller = None
     if not problems:
-        dashboard = Dashboard(config.api_url, config.api_token, timeout=config.request_timeout_seconds, version=config.version)
+        dashboard = Dashboard(
+            config.api_url, config.api_token, timeout=config.request_timeout_seconds,
+            version=config.version, cluster=config.cluster_name,
+        )
         poller = Poller(dashboard, make_hosts(config), metrics, emit, log_findings=config.log_findings)
 
     while not stop.is_set():

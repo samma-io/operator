@@ -139,3 +139,18 @@ ports, or those ports to any address when no peers are listed.
   {{- end }}
 {{- end }}
 {{- end -}}
+
+{{/*
+SAMMA_CLUSTER_NAME for the operator, the api and the collector, when
+clusterName is set. samma.io lists the cluster (Ready/Down) and links the
+targets it adds to it. The rule is the dashboard's (app, src/lib/clusters.ts).
+*/}}
+{{- define "samma.clusterNameEnv" -}}
+{{- with .Values.clusterName }}
+{{- if not (regexMatch "^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$" .) }}
+{{- fail (printf "clusterName %q: use lowercase letters, digits, dots and dashes (1-63 characters, a letter or digit at each end)" .) }}
+{{- end }}
+- name: SAMMA_CLUSTER_NAME
+  value: {{ . | quote }}
+{{- end }}
+{{- end }}

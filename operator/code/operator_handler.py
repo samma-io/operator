@@ -49,6 +49,10 @@ write_to_file = os.getenv('WRITE_TO_FILE', 'true')
 samma_io_api_url = os.getenv('SAMMA_IO_API_URL', 'https://www.samma.io')
 samma_io_api_token = os.getenv('SAMMA_IO_API_TOKEN', '')
 samma_io_profile_id = os.getenv('SAMMA_IO_PROFILE_ID', '')
+# Sent as X-Samma-Cluster: samma.io links the targets this operator adds to
+# the cluster (chart clusterName; the chart validates it).
+samma_cluster_name = os.getenv('SAMMA_CLUSTER_NAME', '').strip()
+samma_version = os.getenv('SAMMA_VERSION', '').strip()
 nats_url = os.getenv('NATS_URL', 'nats://nats:4222')
 nats_enabled = os.getenv('NATS_ENABLED', 'True')
 nats_subject = os.getenv('NATS_SUBJECT', 'samma-io.scan')
@@ -432,7 +436,9 @@ def shutdown(**_):
 
 
 def post_target_to_api(host):
-    """POST a discovered domain to the external samma.io API if a token is configured."""
+    """Register a discovered domain on samma.io if a token is configured.
+    PUT, not POST: samma.io keeps one target per (profile, value), so the
+    same host from every Ingress event is registered once."""
     if not samma_io_api_token:
         return
     url = "{0}/api/v1/targets".format(samma_io_api_url.rstrip('/'))
@@ -443,9 +449,13 @@ def post_target_to_api(host):
         "Authorization": "Bearer {0}".format(samma_io_api_token),
         "Content-Type": "application/json",
     }
+    if samma_cluster_name:
+        headers["X-Samma-Cluster"] = samma_cluster_name
+        if samma_version:
+            headers["X-Samma-Version"] = samma_version
     try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=10)
-        logging.info("Posted target %s to API: %s", host, resp.status_code)
+        resp = requests.put(url, json=payload, headers=headers, timeout=10)
+        logging.info("Registered target %s on samma.io: HTTP %s", host, resp.status_code)
     except Exception as exc:
         logging.warning("Failed to post target %s to API: %s", host, exc)
 

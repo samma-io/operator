@@ -96,7 +96,8 @@ def require_bearer_token():
 
 
 def post_target_to_api(target, target_id):
-    """POST a target to the external samma.io API for validation if a token is configured."""
+    """Register a target on samma.io if a token is configured. PUT keeps one
+    target per (profile, value) there; X-Samma-Cluster links it to this cluster."""
     if not samma_io_api_token:
         return
     url = "{0}/api/v1/targets".format(samma_io_api_url.rstrip('/'))
@@ -112,9 +113,12 @@ def post_target_to_api(target, target_id):
         "Authorization": "Bearer {0}".format(samma_io_api_token),
         "Content-Type": "application/json",
     }
+    cluster = os.getenv('SAMMA_CLUSTER_NAME', '').strip()
+    if cluster:
+        headers["X-Samma-Cluster"] = cluster
     try:
-        resp = http_requests.post(url, json=payload, headers=headers, timeout=10)
-        logging.info("Posted target %s to API: %s", target, resp.status_code)
+        resp = http_requests.put(url, json=payload, headers=headers, timeout=10)
+        logging.info("Registered target %s on samma.io: HTTP %s", target, resp.status_code)
         return resp.status_code
     except Exception as e:
         logging.warning("Failed to post target %s to API: %s", target, e)

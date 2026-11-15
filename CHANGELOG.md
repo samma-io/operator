@@ -7,6 +7,13 @@ A release is a tag `v<version>` on `main`. Pushing it runs
 
 ## Unreleased
 
+- `clusterName` (empty by default) names the cluster on samma.io. The operator, the api and the
+  collector send it as `X-Samma-Cluster` (with `X-Samma-Version`). samma.io's Clusters page lists
+  the cluster as Ready or Down, and the targets the operator registers show which cluster added
+  them. The collector's `samma_collector_info` gains a `cluster` label, and the Grafana dashboard
+  gains a Cluster panel. The render fails on an invalid name. README, "Name the cluster".
+- The operator and the api register targets on samma.io with `PUT /api/v1/targets` (one target per
+  profile and value) instead of `POST`, which created a duplicate on every Ingress event.
 - New component, the **collector** (`collector/`, image `ghcr.io/samma-io/samma-collector`, chart
   `collector.enabled`, off by default). It reads the results that samma.io holds for this cluster's
   opted-in Ingress hosts through the read API (`/api/v1/targets`,

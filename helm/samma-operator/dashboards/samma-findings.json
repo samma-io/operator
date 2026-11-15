@@ -8,7 +8,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": true,
   "graphTooltip": 1,
   "time": {
@@ -66,7 +66,7 @@
       "gridPos": {
         "x": 0,
         "y": 0,
-        "w": 4,
+        "w": 3,
         "h": 4
       },
       "targets": [
@@ -126,9 +126,9 @@
         "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
-        "x": 4,
+        "x": 3,
         "y": 0,
-        "w": 4,
+        "w": 3,
         "h": 4
       },
       "targets": [
@@ -188,9 +188,9 @@
         "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
-        "x": 8,
+        "x": 6,
         "y": 0,
-        "w": 4,
+        "w": 3,
         "h": 4
       },
       "targets": [
@@ -239,6 +239,51 @@
         "colorMode": "background",
         "graphMode": "none",
         "textMode": "value"
+      }
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Cluster",
+      "description": "The chart's clusterName: the name this cluster has on samma.io's Clusters page, where it shows Ready while the collector polls. \"unnamed\" when clusterName is not set.",
+      "gridPos": {
+        "x": 9,
+        "y": 0,
+        "w": 3,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (cluster) (label_replace(samma_collector_info, \"cluster\", \"unnamed\", \"cluster\", \"\"))",
+          "instant": true,
+          "legendFormat": "{{cluster}}"
+        }
+      ],
+      "options": {
+        "textMode": "name",
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "\u2014",
+          "mappings": [],
+          "displayName": "${__series.name}"
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
       }
     },
     {

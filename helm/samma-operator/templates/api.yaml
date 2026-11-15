@@ -70,6 +70,7 @@ spec:
               value: {{ .Values.config.apiToken | quote }}
             - name: SAMMA_IO_PROFILE_ID
               value: {{ .Values.config.profileId | quote }}
+            {{- with include "samma.clusterNameEnv" . }}{{ . | nindent 12 }}{{- end }}
             - name: SAMMA_API_TOKEN
               valueFrom:
                 secretKeyRef:

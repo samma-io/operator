@@ -145,11 +145,11 @@ class CollectorMetrics(object):
     target is a host of an opted-in Ingress of this cluster, scanner one of
     the scanner names, severity one of SEVERITY_LABELS."""
 
-    def __init__(self, registry=None, version="dev"):
+    def __init__(self, registry=None, version="dev", cluster=""):
         self.registry = registry or Registry()
         r = self.registry
-        self.info = r.gauge("samma_collector_info", "Always 1; the collector's release.", ("version",))
-        self.info.set(1, version)
+        self.info = r.gauge("samma_collector_info", "Always 1; the collector's release and cluster name (empty when unset).", ("version", "cluster"))
+        self.info.set(1, version, cluster)
         self.findings = r.gauge("samma_findings", "Findings of the latest run of a scanner against a target, by severity.", ("target", "scanner", "severity"))
         self.last_finished = r.gauge("samma_scan_last_finished_timestamp_seconds", "When the latest run of a scanner against a target finished (Unix time).", ("target", "scanner"))
         self.outcome = r.gauge("samma_scan_outcome", "1 for the outcome of the latest run of a scanner against a target.", ("target", "scanner", "outcome"))

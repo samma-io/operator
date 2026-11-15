@@ -61,6 +61,12 @@ spec:
               value: {{ .Values.config.apiToken | quote }}
             - name: SAMMA_IO_PROFILE_ID
               value: {{ .Values.config.profileId | quote }}
+            {{- with include "samma.clusterNameEnv" . }}{{ . | nindent 12 }}{{- end }}
+            {{- if .Values.clusterName }}
+            # Sent with the cluster name as X-Samma-Version.
+            - name: SAMMA_VERSION
+              value: {{ .Chart.AppVersion | quote }}
+            {{- end }}
             - name: SAMMA_ALLOW_PRIVATE_TARGETS
               value: {{ .Values.config.allowPrivateTargets | quote }}
             - name: SAMMA_ALLOW_UNMANAGED_TARGETS

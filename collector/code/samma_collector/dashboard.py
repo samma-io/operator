@@ -5,6 +5,9 @@
                                            {targetId, runs: [...], results: [...]}
 
 Both take ``Authorization: Bearer <token>``; a read-only token is enough.
+With a cluster name every call also carries ``X-Samma-Cluster`` and
+``X-Samma-Version``: samma.io records the cluster and when it was last seen,
+so these polls are the cluster's heartbeat on the Clusters page.
 The token never appears in a message or an exception.
 """
 
@@ -32,11 +35,12 @@ class NotFound(DashboardError):
 
 
 class Dashboard(object):
-    def __init__(self, base_url, token, timeout=15, version="dev", opener=None):
+    def __init__(self, base_url, token, timeout=15, version="dev", opener=None, cluster=""):
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.timeout = timeout
         self.user_agent = "samma-collector/{0}".format(version)
+        self.cluster_headers = {"X-Samma-Cluster": cluster, "X-Samma-Version": version} if cluster else {}
         self._open = opener or urllib.request.urlopen
 
     def targets(self):
@@ -59,14 +63,13 @@ class Dashboard(object):
         return self._get(path)
 
     def _get(self, path):
-        request = urllib.request.Request(
-            self.base_url + path,
-            headers={
-                "Authorization": "Bearer " + self.token,
-                "Accept": "application/json",
-                "User-Agent": self.user_agent,
-            },
-        )
+        headers = {
+            "Authorization": "Bearer " + self.token,
+            "Accept": "application/json",
+            "User-Agent": self.user_agent,
+        }
+        headers.update(self.cluster_headers)
+        request = urllib.request.Request(self.base_url + path, headers=headers)
         endpoint = path.split("?", 1)[0]
         try:
             with self._open(request, timeout=self.timeout) as response:

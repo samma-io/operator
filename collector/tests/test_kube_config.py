@@ -63,6 +63,13 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.static_hosts, ["a.example.com"])
         self.assertEqual(config.problems(), [])
 
+    def test_cluster_name(self):
+        self.assertEqual(Config.from_env({"SAMMA_IO_API_TOKEN": "t", "SAMMA_CLUSTER_NAME": " v2 "}).cluster_name, "v2")
+        self.assertEqual(Config.from_env({}).cluster_name, "")
+        for bad in ("V2", "-v2", "v2.", "a_b", "x" * 64):
+            problems = Config(api_token="t", cluster_name=bad).problems()
+            self.assertEqual(len(problems), 1, bad)
+
     def test_bad_url(self):
         config = Config(api_url="ftp://x", api_token="t")
         self.assertEqual(len(config.problems()), 1)
@@ -70,14 +77,14 @@ class ConfigTests(unittest.TestCase):
 
 class MetricsEndpointTests(unittest.TestCase):
     def test_serves_metrics_and_replace(self):
-        m = metrics.CollectorMetrics(version="1.2.3")
+        m = metrics.CollectorMetrics(version="1.2.3", cluster="v2")
         m.findings.replace({("a.example.com", "tls-scanner", "HIGH"): 2})
         m.findings.replace({("b.example.com", "tls-scanner", "LOW"): 1})
         server = metrics.start_http_server(m.registry, 0, host="127.0.0.1", ready=lambda: False)
         try:
             port = server.server_address[1]
             text = urllib.request.urlopen("http://127.0.0.1:{0}/metrics".format(port)).read().decode()
-            self.assertIn('samma_collector_info{version="1.2.3"} 1', text)
+            self.assertIn('samma_collector_info{version="1.2.3",cluster="v2"} 1', text)
             self.assertIn('samma_findings{target="b.example.com",scanner="tls-scanner",severity="LOW"} 1', text)
             self.assertNotIn("a.example.com", text)
             with self.assertRaises(urllib.error.HTTPError) as caught:

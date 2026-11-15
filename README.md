@@ -728,6 +728,30 @@ Once it has a token:
 These map to the `SAMMA_IO_API_URL`, `SAMMA_IO_API_TOKEN` and `SAMMA_IO_PROFILE_ID`
 [environment variables](#environment-variables).
 
+### Name the cluster
+
+Give the cluster a name so samma.io can tell your clusters apart:
+
+```bash
+--set clusterName=prod-eu
+```
+
+The name uses lowercase letters, digits, dots and dashes, 1 to 63 characters, with a letter or
+digit at each end. The render fails on anything else. The operator, the api and the
+[collector](#collector) send it as an `X-Samma-Cluster` header (plus `X-Samma-Version`) on
+every samma.io API call. On samma.io:
+
+- **Dashboard → Clusters** lists the cluster. It is **Ready** while it called the API in the
+  last 15 minutes, otherwise **Down**. The collector polls every 5 minutes, so with the collector
+  on, the status follows the cluster. Without it, the cluster is only seen when the operator
+  registers a target.
+- Targets the operator registers show the cluster in their **Cluster** column. The first cluster
+  to register a host keeps it.
+
+The operator registers a host with `PUT /api/v1/targets`, which samma.io keeps as one target per
+profile and value, so Ingress events do not create duplicates. Empty `clusterName` (the default)
+sends no header, and the cluster does not appear on the Clusters page.
+
 Note the difference between the two tokens: `SAMMA_IO_API_TOKEN` is outbound — it authenticates
 this operator to samma.io — while `SAMMA_API_TOKEN` is inbound — it is the bearer token callers of
 this operator's own REST API must send, and the API exits at startup without one.
@@ -1136,6 +1160,7 @@ curl -X DELETE http://localhost:8080/scanner \
 | `SAMMA_IO_API_URL` | — | External samma.io API base URL |
 | `SAMMA_IO_API_TOKEN` | — | Bearer token for external API (skipped if empty) |
 | `SAMMA_IO_PROFILE_ID` | — | Profile ID sent to external API |
+| `SAMMA_CLUSTER_NAME` | — | Chart `clusterName`: sent as `X-Samma-Cluster` when registering targets on samma.io |
 | `SAMMA_ALLOW_PRIVATE_TARGETS` | `false` | `true` lets a target resolve to a private, loopback, link-local, multicast or carrier-grade NAT address. See [Target validation](#target-validation). |
 | `SAMMA_ALLOW_UNMANAGED_TARGETS` | `true` | `false` refuses a Scanner whose target is not the host of an Ingress in the cluster. |
 | `SAMMA_ALLOWED_SCANNERS` | empty | Comma-separated scanners the operator may run; empty allows every scanner. See [Allowed scanners](#allowed-scanners). |
@@ -1194,6 +1219,7 @@ Same env vars as operator, plus the external API vars above.
 | `SAMMA_INGRESS_NAMESPACES` | unset | More namespaces whose Ingresses count, `*` for all (as for the operator) |
 | `COLLECTOR_HOSTS` | unset | Local runs only: these hosts instead of the Ingress listing |
 | `METRICS_PORT` | `9100` | Prometheus metrics, `/healthz` and `/readyz` |
+| `SAMMA_CLUSTER_NAME` | unset | Chart `clusterName`: sent as `X-Samma-Cluster`, the cluster's heartbeat on samma.io; an invalid name fails `/readyz` |
 
 ---
 
