@@ -592,6 +592,43 @@ networkPolicies:
       - ipBlock: {cidr: <its address>/32}
 ```
 
+### External TimescaleDB
+
+The bridge can write `scan_results` rows to a TimescaleDB outside the release, for example when the
+scanners run in a cluster of their own and the database stays with the dashboard. Set
+`timescaledb.enabled=false` and `bridge.externalDatabase`. The login needs `INSERT` on `scan_results`
+and nothing more. Its password is the key `password` of a Secret you create, and it never appears in
+a Deployment. The render fails without `user` or `existingSecret`, or with the bundled database still
+on. The bridge still drops any row that no current Scanner in its own namespace owns.
+
+With `networkPolicies.enabled`, `networkPolicies.externalDatabase` gives the bridge egress to that
+database: its `ports` to the peers in `to`. This works the same way as `externalNats`, so list the
+database's address in `to`.
+
+A dashboard outside the cluster reaches the API through `api.service.type: NodePort`
+(`api.service.nodePort` fixes the port). Its addresses go in `networkPolicies.apiClientCidrs`; the
+Service uses `externalTrafficPolicy: Local` so the policy sees the caller's address. Keep that port
+off public networks: the API launches scans.
+
+```yaml
+timescaledb:
+  enabled: false
+bridge:
+  externalDatabase:
+    host: 10.0.0.4
+    port: 30543
+    user: bridge_writer
+    existingSecret: samma-bridge-db
+api:
+  service: {type: NodePort, nodePort: 30080}
+networkPolicies:
+  apiClientCidrs: [10.1.0.3/32]
+  externalDatabase:
+    ports: [30543]
+    to:
+      - ipBlock: {cidr: 10.0.0.0/16}
+```
+
 ---
 
 ## Network policies
