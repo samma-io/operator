@@ -597,7 +597,9 @@ networkPolicies:
 The bridge can write `scan_results` rows to a TimescaleDB outside the release, for example when the
 scanners run in a cluster of their own and the database stays with the dashboard. Set
 `timescaledb.enabled=false` and `bridge.externalDatabase`. The login needs `INSERT` on `scan_results`
-and nothing more. Its password is the key `password` of a Secret you create, and it never appears in
+and nothing more: the chart sets `DATABASE_SETUP=false`, so the bridge does not create the table,
+index or `samma_reader` role. The database's owner must already have created them, for example
+with a bridge that ran against it as the owner. Its password is the key `password` of a Secret you create, and it never appears in
 a Deployment. The render fails without `user` or `existingSecret`, or with the bundled database still
 on. The bridge still drops any row that no current Scanner in its own namespace owns.
 
@@ -1020,6 +1022,7 @@ Same env vars as operator, plus the external API vars above.
 | `NATS_USER`, `NATS_PASSWORD` | unset | NATS credentials (the `bridge` user) |
 | `NATS_CREDS` | unset | Path to a NATS credentials file; wins over user and password |
 | `DATABASE_URL` | unset | TimescaleDB connection string. Empty: no database, ScanReports only |
+| `DATABASE_SETUP` | `true` | Create the `scan_results` table, hypertable, index and `samma_reader` role at startup. `false` for a database whose schema is owned elsewhere (the chart sets it with `bridge.externalDatabase`) |
 | `SAMMA_NAMESPACE` | `samma-io` | Where Scanners are listed and ScanReports written |
 | `SCANREPORTS_ENABLED` | `true` | `false` stores rows only and never touches the Kubernetes API |
 | `METRICS_PORT` | `9100` | Prometheus metrics, `/healthz` and `/readyz` |

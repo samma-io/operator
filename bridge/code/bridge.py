@@ -62,7 +62,7 @@ INSERT_ROW = """INSERT INTO scan_results
 TICK_SECONDS = 1.0
 
 
-async def connect_database(url):
+async def connect_database(url, setup=True):
     import asyncpg  # third-party, installed in the image
 
     while True:
@@ -72,6 +72,11 @@ async def connect_database(url):
         except Exception as exc:
             log.warning("DB not ready, retrying in 5s: %s", exc)
             await asyncio.sleep(5)
+    if not setup:
+        # DATABASE_SETUP=false: the schema belongs to the database's owner
+        # and this login may only insert; creating it would be refused.
+        log.info("TimescaleDB ready (schema setup skipped)")
+        return db
     await db.execute(CREATE_TABLE)
     await db.execute(CREATE_READER_ROLE)
     log.info("TimescaleDB ready")
@@ -118,7 +123,7 @@ async def main():
              config.version, config.metrics_port, config.namespace,
              "on" if config.scanreports_enabled else "off", "on" if config.database_enabled else "off")
 
-    db = await connect_database(config.database_url) if config.database_enabled else None
+    db = await connect_database(config.database_url, config.database_setup) if config.database_enabled else None
 
     pipeline = None
     index = None

@@ -12,6 +12,7 @@ class Config(object):
         nats_password="",
         nats_creds="",
         database_url="",
+        database_setup=True,
         namespace="samma-io",
         metrics_port=9100,
         scanner_cache_seconds=30,
@@ -26,6 +27,10 @@ class Config(object):
         self.nats_password = nats_password
         self.nats_creds = nats_creds
         self.database_url = database_url
+        # Create the table, hypertable, index and samma_reader role at
+        # startup. False for a database whose schema is owned elsewhere and
+        # whose login may only INSERT (DATABASE_SETUP=false).
+        self.database_setup = database_setup
         self.namespace = namespace
         self.metrics_port = metrics_port
         self.scanner_cache_seconds = scanner_cache_seconds
@@ -77,6 +82,7 @@ class Config(object):
             nats_password=env.get("NATS_PASSWORD", "") or "",
             nats_creds=text("NATS_CREDS"),
             database_url=text("DATABASE_URL"),
+            database_setup=flag("DATABASE_SETUP", True),
             namespace=text("SAMMA_NAMESPACE", "samma-io"),
             metrics_port=number("METRICS_PORT", 9100),
             scanner_cache_seconds=number("SCANNER_CACHE_SECONDS", 30, minimum=1),

@@ -12,6 +12,8 @@ A release is a tag `v<version>` on `main`. Pushing it runs
   `sslmode`) with `timescaledb.enabled=false`, plus
   `networkPolicies.externalDatabase` for its egress. This lets the scanners
   run in a cluster of their own while the database stays with the dashboard.
+  The bridge then skips its schema setup (new `DATABASE_SETUP`, default
+  `true`), so an INSERT-only login is enough.
 - `api.service.type` (`ClusterIP` or `NodePort`), `api.service.nodePort` and
   `networkPolicies.apiClientCidrs` let a caller outside the cluster reach the
   API. A NodePort Service uses `externalTrafficPolicy: Local`.

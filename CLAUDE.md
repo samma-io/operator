@@ -82,6 +82,7 @@ NATS (`nats:2`) is deployed in `samma-io` on port 4222 with the config in the `n
 
 The bridge (`bridge/code/bridge.py` plus the package `bridge/code/samma_bridge/`) subscribes to `NATS_SUBJECT` and `NATS_SUBJECT.>`. `bridge.py` is only the asyncio wiring (nats-py, asyncpg, the kubernetes adapter in `kube.py`, all imported lazily); everything that decides something is plain Python with unit tests in `bridge/tests`:
 
+- `config.py` reads the environment; `DATABASE_SETUP=false` (chart: `bridge.externalDatabase`) makes `connect_database` skip the CREATE TABLE/INDEX and `samma_reader` setup, for an INSERT-only login.
 - `messages.py` parses one message: no `schema` key is a legacy v1 message (TimescaleDB only, as before); `samma.io/scan/v2` `finding` and `run` messages are validated (types, enums, patterns; `Rejected` with a reason label) and text fields are cut to the CRD limits.
 - `accumulator.py` collects findings per `(scanner, template, target, runId)` until the run message; waits `STRAGGLER_WAIT_SECONDS` when the run message counts more findings than arrived; drops runs without a run message after `RUN_IDLE_TIMEOUT_SECONDS`.
 - `scanners.py` caches the Scanner list (`SCANNER_CACHE_SECONDS`); a target the cache lacks re-lists once (at most once a second, `miss_refresh_seconds`), because a Scanner created since the last list sends its first scan within seconds; a message whose target is still not a current Scanner's target is dropped; the matching Scanners become the report's owners and give it the Ingress labels.
