@@ -17,6 +17,20 @@ A release is a tag `v<version>` on `main`. Pushing it runs
   (`helm/samma-operator/dashboards/samma-findings.json`, optionally as a sidecar ConfigMap), and a
   `samma-collector` NetworkPolicy. It uses the standard library only. README, "Collector".
 
+## 0.2.11
+
+- The bridge can write to a TimescaleDB outside the release:
+  `bridge.externalDatabase` (`host`, `port`, `db`, `user`, `existingSecret`,
+  `sslmode`) with `timescaledb.enabled=false`, plus
+  `networkPolicies.externalDatabase` for its egress. This lets the scanners
+  run in a cluster of their own while the database stays with the dashboard.
+  The bridge then skips its schema setup (new `DATABASE_SETUP`, default
+  `true`), so an INSERT-only login is enough.
+- `api.service.type` (`ClusterIP` or `NodePort`), `api.service.nodePort` and
+  `networkPolicies.apiClientCidrs` let a caller outside the cluster reach the
+  API. A NodePort Service uses `externalTrafficPolicy: Local`.
+- Defaults are unchanged: the default render is identical.
+
 ## 0.2.10
 
 - The bridge's `/metrics`, `/healthz` and `/readyz` listener now takes IPv6
