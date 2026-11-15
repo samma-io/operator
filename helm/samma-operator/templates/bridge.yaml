@@ -70,7 +70,22 @@ spec:
                   name: {{ . }}
                   key: bridge-password
             {{- end }}
-            {{- if include "samma.storeInTimescaleDB" . }}
+            {{- if and (include "samma.storeInTimescaleDB" .) (include "samma.externalDatabase" .) }}
+            {{- with .Values.bridge.externalDatabase }}
+            # TimescaleDB outside the release (bridge.externalDatabase). The
+            # password stays in the Secret; the kubelet expands it below.
+            - name: TIMESCALEDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .existingSecret }}
+                  key: password
+            - name: DATABASE_URL
+              value: "postgresql://{{ .user }}:$(TIMESCALEDB_PASSWORD)@{{ .host }}:{{ int .port }}/{{ .db }}{{ with .sslmode }}?sslmode={{ . }}{{ end }}"
+            # The database's owner made the schema; this login only inserts.
+            - name: DATABASE_SETUP
+              value: "false"
+            {{- end }}
+            {{- else if include "samma.storeInTimescaleDB" . }}
             # The password stays in the Secret; the kubelet expands
             # $(TIMESCALEDB_PASSWORD) into the URL.
             - name: TIMESCALEDB_PASSWORD

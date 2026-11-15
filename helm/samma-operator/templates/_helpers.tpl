@@ -29,10 +29,46 @@ user sees is this one whatever order Helm renders the files in.
 
 {{- /*
 samma.storeInTimescaleDB is "true" when the bridge should write rows:
-TimescaleDB is deployed and bridge.storeInTimescaleDB is on.
+bridge.storeInTimescaleDB is on and there is a database to write to, the
+bundled TimescaleDB or bridge.externalDatabase.host.
 */ -}}
 {{- define "samma.storeInTimescaleDB" -}}
-{{- if and .Values.timescaledb.enabled .Values.bridge.storeInTimescaleDB }}true{{ end -}}
+{{- if and .Values.bridge.storeInTimescaleDB (or .Values.timescaledb.enabled (include "samma.externalDatabase" .)) }}true{{ end -}}
+{{- end -}}
+
+{{- /*
+samma.externalDatabase is "true" when the bridge writes to a TimescaleDB
+outside the release (bridge.externalDatabase.host set, timescaledb.enabled
+false). It fails the render when the host is set without a user or a
+Secret, or together with the bundled database.
+*/ -}}
+{{- define "samma.externalDatabase" -}}
+{{- with .Values.bridge.externalDatabase }}
+{{- if .host }}
+{{- if $.Values.timescaledb.enabled }}
+{{- fail "bridge.externalDatabase.host needs timescaledb.enabled=false: the bridge writes to one database" }}
+{{- end }}
+{{- if not .user }}
+{{- fail "bridge.externalDatabase.user is required with bridge.externalDatabase.host" }}
+{{- end }}
+{{- if not .existingSecret }}
+{{- fail "bridge.externalDatabase.existingSecret (a Secret with the key \"password\") is required with bridge.externalDatabase.host" }}
+{{- end }}
+{{- if not (regexMatch "^[A-Za-z0-9._-]+$" (toString .host)) }}
+{{- fail "bridge.externalDatabase.host must be a hostname or IPv4 address" }}
+{{- end }}
+{{- if not (regexMatch "^[A-Za-z0-9_]+$" (toString .user)) }}
+{{- fail "bridge.externalDatabase.user must be alphanumeric or _" }}
+{{- end }}
+{{- if not (regexMatch "^[A-Za-z0-9_]+$" (toString .db)) }}
+{{- fail "bridge.externalDatabase.db must be alphanumeric or _" }}
+{{- end }}
+{{- if and .sslmode (not (has (toString .sslmode) (list "disable" "allow" "prefer" "require" "verify-ca" "verify-full"))) }}
+{{- fail "bridge.externalDatabase.sslmode must be a libpq sslmode" }}
+{{- end }}
+true
+{{- end }}
+{{- end }}
 {{- end -}}
 
 {{- /*

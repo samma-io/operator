@@ -115,6 +115,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.straggler_wait_seconds, 30)
         self.assertEqual(config.run_idle_timeout_seconds, 3600)
         self.assertFalse(config.database_enabled)
+        self.assertTrue(config.database_setup)
         self.assertTrue(config.scanreports_enabled)
         self.assertEqual(config.version, "dev")
         self.assertEqual(config.nats_connect_options(), {"servers": ["nats://nats:4222"]})
@@ -136,6 +137,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.straggler_wait_seconds, 5)
         self.assertEqual(config.run_idle_timeout_seconds, 60, "minimum 60")
         self.assertFalse(config.scanreports_enabled)
+
+    def test_database_setup_off(self):
+        self.assertFalse(Config.from_env({"DATABASE_URL": "postgresql://x", "DATABASE_SETUP": "false"}).database_setup)
+        self.assertTrue(Config.from_env({"DATABASE_SETUP": ""}).database_setup)
 
     def test_credentials_file_wins(self):
         config = Config.from_env({"NATS_CREDS": "/etc/nats/bridge.creds", "NATS_USER": "bridge", "NATS_PASSWORD": "x"})

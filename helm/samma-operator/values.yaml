@@ -175,6 +175,14 @@ api:
   # lands in the rendered manifests. There is no default.
   token: ""
   existingSecret: ""
+  # The api Service. ClusterIP (the default) serves pods in the cluster.
+  # NodePort serves a caller outside the cluster, such as a dashboard in
+  # another cluster; list its addresses in networkPolicies.apiClientCidrs
+  # and keep the node port off public networks: the API launches scans.
+  service:
+    type: ClusterIP
+    # Fixed node port (30000-32767) with type NodePort; empty picks one.
+    nodePort: ""
 
 # NATS message broker (README, "NATS authentication", "External NATS")
 nats:
@@ -240,6 +248,9 @@ networkPolicies:
   # its calls to the API are dropped; listing a namespace allows every pod
   # in it. Pods of the release namespace are always allowed.
   apiClients: []
+  # Addresses (CIDRs) outside the cluster allowed to reach the API on 8080,
+  # for api.service.type NodePort, e.g. ["10.1.0.3/32"].
+  apiClientCidrs: []
   # Namespaces allowed to reach TimescaleDB on 5432 (the samma-timescaledb
   # policy), matched through the automatic kubernetes.io/metadata.name
   # label every namespace carries. Listing a namespace allows every pod in
@@ -258,6 +269,12 @@ networkPolicies:
   # Ignored while nats.enabled is true (the bundled NATS pod is selected).
   externalNats:
     ports: [4222]
+    to: []
+  # With bridge.externalDatabase.host: how the bridge reaches that
+  # database. Same shape as externalNats; empty `to` allows the ports to
+  # any address.
+  externalDatabase:
+    ports: [5432]
     to: []
   # Pods that serve this cluster's Ingresses, which scan pods may reach on
   # the ports listed. Needed wherever the LoadBalancer address in front of
@@ -327,6 +344,19 @@ bridge:
   # Insert every message into TimescaleDB as before. false leaves the
   # bridge with no database at all; so does timescaledb.enabled=false.
   storeInTimescaleDB: true
+  # A TimescaleDB outside the release, for example one in another cluster,
+  # with timescaledb.enabled=false. Empty host: no external database. The
+  # login needs INSERT on scan_results and nothing more; its password is
+  # the key "password" of existingSecret (alphanumeric: it travels in the
+  # bridge's DATABASE_URL). sslmode is a libpq sslmode, empty leaves the
+  # client default. Set networkPolicies.externalDatabase too.
+  externalDatabase:
+    host: ""
+    port: 5432
+    db: samma
+    user: ""
+    existingSecret: ""
+    sslmode: ""
   # How long the list of Scanners (used to drop messages for unknown
   # targets) is cached, and how long a run waits for findings that are
   # still in flight after its run message.

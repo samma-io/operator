@@ -46,6 +46,18 @@ jobs:
             --set nats.enabled=false --set nats.existingSecret=lint > /dev/null
           helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
             --set nats.enabled=false --set nats.auth.enabled=false > /dev/null
+          # External TimescaleDB for the bridge, with a NodePort API.
+          helm template samma helm/samma-operator --set acceptScanningTerms=true --set api.token=lint \
+            --set timescaledb.enabled=false --set bridge.externalDatabase.host=10.0.0.4 --set bridge.externalDatabase.port=30543 \
+            --set bridge.externalDatabase.user=bridge_writer --set bridge.externalDatabase.existingSecret=lint --set bridge.externalDatabase.sslmode=prefer \
+            --set api.service.type=NodePort --set api.service.nodePort=30080 --set-json 'networkPolicies.apiClientCidrs=["10.1.0.3/32"]' \
+            --set-json 'networkPolicies.externalDatabase.to=[{"ipBlock":{"cidr":"10.0.0.0/16"}}]' \
+            | grep -q '@10.0.0.4:30543/samma?sslmode=prefer'
+          # ... but not together with the bundled database.
+          if helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
+            --set bridge.externalDatabase.host=db --set bridge.externalDatabase.user=u --set bridge.externalDatabase.existingSecret=s > /dev/null 2>&1; then
+            echo "externalDatabase rendered with the bundled TimescaleDB"; exit 1
+          fi
           # No ingress controller rule, and a controller named by namespace with numeric ports.
           helm template samma helm/samma-operator --set acceptScanningTerms=true --set timescaledb.password=lint --set api.token=lint \
             --set-json 'networkPolicies.ingressControllers=[]' > /dev/null

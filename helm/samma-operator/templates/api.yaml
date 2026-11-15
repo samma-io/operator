@@ -90,5 +90,16 @@ spec:
     - name: http
       port: 8080
       targetPort: 8080
-  type: ClusterIP
+      {{- if and (eq .Values.api.service.type "NodePort") .Values.api.service.nodePort }}
+      nodePort: {{ int .Values.api.service.nodePort }}
+      {{- end }}
+  {{- if not (has .Values.api.service.type (list "ClusterIP" "NodePort")) }}
+  {{- fail "api.service.type must be ClusterIP or NodePort" }}
+  {{- end }}
+  type: {{ .Values.api.service.type }}
+  {{- if eq .Values.api.service.type "NodePort" }}
+  # Local keeps the caller's address, so networkPolicies.apiClientCidrs
+  # matches it instead of the node's own.
+  externalTrafficPolicy: Local
+  {{- end }}
 {{- end }}
