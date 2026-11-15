@@ -71,8 +71,11 @@ jobs:
       - name: Bridge unit tests
         run: python3 -m unittest discover -s bridge/tests -t bridge
 
+      - name: Collector unit tests
+        run: python3 -m unittest discover -s collector/tests -t collector
+
       - name: Byte-compile every module
-        run: python3 -m compileall -q operator/code bridge/code api/code
+        run: python3 -m compileall -q operator/code bridge/code api/code collector/code
 
       - uses: azure/setup-helm@v4
 
@@ -94,7 +97,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [operator, api, bridge]
+        component: [operator, api, bridge, collector]
     env:
       IMAGE: ghcr.io/${{ needs.verify.outputs.owner }}/samma-${{ matrix.component }}
       VERSION: ${{ needs.verify.outputs.version }}
