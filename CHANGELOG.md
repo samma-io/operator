@@ -16,6 +16,8 @@ A release is a tag `v<version>` on `main`. Pushing it runs
   It comes with an optional ServiceMonitor and a Grafana dashboard
   (`helm/samma-operator/dashboards/samma-findings.json`, optionally as a sidecar ConfigMap), and a
   `samma-collector` NetworkPolicy. It uses the standard library only. README, "Collector".
+- README: upgrade with `--reset-then-reuse-values`, not `--reuse-values`, which skips the chart's
+  defaults for new keys. Turning on `collector.enabled` from 0.2.11 that way failed to render.
 
 ## 0.2.11
 
