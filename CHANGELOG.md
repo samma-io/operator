@@ -7,6 +7,9 @@ A release is a tag `v<version>` on `main`. Pushing it runs
 
 ## Unreleased
 
+- An opted-in Ingress host that resolves to a private address, or does not resolve, is still not
+  scanned by the operator, but it is now registered on samma.io too. samma.io lists it as not
+  scanned and unreachable and starts no scanners, so a cluster's targets all show up there.
 - `clusterName` (empty by default) names the cluster on samma.io. The operator, the api and the
   collector send it as `X-Samma-Cluster` (with `X-Samma-Version`). samma.io's Clusters page lists
   the cluster as Ready or Down, and the targets the operator registers show which cluster added

@@ -710,10 +710,14 @@ def ingress_spec_fields(annotations):
 
 
 def ingress_hosts(body):
-    """(hosts to scan, hosts that did not resolve yet). Wildcard and
-    host-less rules are skipped and rejected hosts get an event."""
+    """(hosts to scan, hosts that did not resolve yet, hosts to register
+    only). Wildcard and host-less rules are skipped and rejected hosts get an
+    event. A valid host that is private or does not resolve is not scanned,
+    but it is still registered on samma.io (register_only), which shows it
+    as unreachable and starts no scanners for it."""
     hosts = []
     deferred = []
+    register_only = []
     for rule in (body.get('spec') or {}).get('rules') or []:
         host = rule.get('host')
         if not host:
@@ -729,14 +733,27 @@ def ingress_hosts(body):
         except target_policy.TargetUnresolvable as exc:
             logging.warning("%s", exc)
             deferred.append(host)
+            if host not in register_only:
+                register_only.append(host)
             continue
         except target_policy.TargetRejected as exc:
             logging.warning("%s", exc)
             kopf.warn(body, reason='TargetRejected', message=str(exc))
+            if _valid_host(host) and host not in register_only:
+                register_only.append(host)
             continue
         if host not in hosts:
             hosts.append(host)
-    return hosts, deferred
+    return hosts, deferred, register_only
+
+
+def _valid_host(host):
+    """The host's syntax is fine, so a rejection was about where it points."""
+    try:
+        target_policy.validate_target(host)
+        return True
+    except target_policy.TargetRejected:
+        return False
 
 
 def ingress_selector(namespace, name):
@@ -805,8 +822,9 @@ def reconcile_ingress(body, retry):
     if not ingress_enabled(annotations):
         wanted = {}
         deferred = []
+        register_only = []
     else:
-        hosts, deferred = ingress_hosts(body)
+        hosts, deferred, register_only = ingress_hosts(body)
         wanted = desired_scanners(body, hosts)
 
     for name, item in existing.items():
@@ -842,6 +860,14 @@ def reconcile_ingress(body, retry):
             except ApiException as exc:
                 kopf.warn(body, reason='ScannerUpdateFailed',
                           message="Could not update Scanner {0}: {1}".format(name, getattr(exc, 'reason', exc)))
+
+    # Private or unresolvable hosts: no Scanner here, but samma.io still lists
+    # them (as unreachable, without scanners), so the cluster's inventory is
+    # complete. PUT keeps one target per host, so a retry does not duplicate.
+    for host in register_only:
+        if host not in posted:
+            posted.add(host)
+            post_target_to_api(host)
 
     if deferred:
         message = "Ingress hosts {0} did not resolve yet".format(", ".join(deferred))
