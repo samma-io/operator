@@ -755,7 +755,9 @@ every samma.io API call. On samma.io:
 - Targets the operator registers show the cluster in their **Cluster** column. The first cluster
   to register a host keeps it.
 
-The operator registers a host with `PUT /api/v1/targets`, which samma.io keeps as one target per
+Every opted-in host is registered, including one that resolves to a private address or does not
+resolve. The operator does not scan such a host, and samma.io lists it as **Not scanned ·
+Unreachable** without starting scanners. The operator registers a host with `PUT /api/v1/targets`, which samma.io keeps as one target per
 profile and value, so Ingress events do not create duplicates. Empty `clusterName` (the default)
 sends no header, and the cluster does not appear on the Clusters page.
 
