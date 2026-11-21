@@ -796,6 +796,10 @@ It exposes the results on `:9100/metrics`, through the Service `samma-collector`
 A failed poll keeps the previous values. A target that goes away loses its series on the next
 successful poll.
 
+Results of external (partner) scanners that samma.io runs for the target come back the same way,
+under the scanner name `external:<id>`, e.g. `samma_findings{scanner="external:samma-demo"}`. Their
+detail text arrives as `evidence`, so it is never logged.
+
 It also writes one JSON line per finding of each new run to stdout, for Loki or any log shipper:
 
 ```json
