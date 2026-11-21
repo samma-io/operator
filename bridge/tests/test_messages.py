@@ -73,6 +73,12 @@ class FindingTests(unittest.TestCase):
         row = parse(finding()).legacy_row()
         self.assertEqual((row["host"], row["port"], row["status"], row["type"], row["scanner"]), (TARGET, "443", "open", "tls", "tls-scanner"))
 
+    def test_legacy_row_of_a_run_takes_the_host_from_the_target(self):
+        # A run message has no top-level host; the tenant check needs one.
+        row = parse(run()).legacy_row()
+        self.assertEqual(row["host"], TARGET)
+        self.assertEqual(json.loads(row["raw"])["kind"], "run")
+
     def test_endpoint_defaults_to_the_target(self):
         message = parse(finding(endpoint=None))
         self.assertEqual(message.endpoint, {"host": TARGET, "port": None, "scheme": None})

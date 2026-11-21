@@ -74,7 +74,7 @@ scanners:
   # The detect scanners (github.com/samma-io/detect) are released together,
   # so one tag covers all of them: ghcr.io/samma-io/detect-<name>:<detectTag>.
   # This is the detect release the operator was tested with.
-  detectTag: "2.0.3"
+  detectTag: "2.0.5"
   # The scanners detectTag applies to (the operator's own table has the same
   # names).
   detectScanners:
