@@ -275,11 +275,14 @@ def parse(payload):
 
 def legacy_row(data):
     """The TimescaleDB columns the original bridge filled, from any message
-    (v2 messages mirror host, port, status and type at the top level)."""
+    (v2 findings mirror host, port, status and type at the top level). A v2
+    run message has no ``host``, only ``target``: without the fallback its
+    row had host None, the tenant check dropped it, and no run summary
+    reached scan_results."""
     samma = data.get("samma-io") if isinstance(data.get("samma-io"), dict) else {}
     port = data.get("port")
     return {
-        "host": _str_or_none(data.get("host")),
+        "host": _str_or_none(data.get("host") or data.get("target")),
         "port": "" if port is None else str(port),
         "status": _str_or_none(data.get("status")),
         "type": _str_or_none(data.get("type")),
