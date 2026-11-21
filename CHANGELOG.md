@@ -11,9 +11,11 @@ A release is a tag `v<version>` on `main`. Pushing it runs
   v2 run message carries `target` but no top-level `host`, so its row had no
   host, the tenant check refused it ("Dropped row for None"), and only
   findings reached `scan_results`. `legacy_row` now falls back to `target`.
-- Detect scanners default to 2.0.4 (`scanners.detectTag`): tls-scanner also
+- Detect scanners default to 2.0.5 (`scanners.detectTag`). tls-scanner also
   tries handshakes pinned to TLS 1.0 and 1.1 and reports the accepted ones as
-  `SAMMA-TLS-PROTOCOL-DEPRECATED` (samma-io/detect#14).
+  `SAMMA-TLS-PROTOCOL-DEPRECATED` (2.0.4). http-headers-scanner reports a
+  version in `Server`/`X-Powered-By` and cookies set without Secure, HttpOnly
+  or SameSite, recording cookie names only (2.0.5).
 - An opted-in Ingress host that resolves to a private address, or does not resolve, is still not
   scanned by the operator, but it is now registered on samma.io too. samma.io lists it as not
   scanned and unreachable and starts no scanners, so a cluster's targets all show up there.

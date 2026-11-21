@@ -526,21 +526,21 @@ spec:
             # The detect scanners, pinned to the detect release this operator
             # was tested with (the chart's scanners.detectTag).
             - name: SAMMA_SCANNER_IMAGE_DNS_SCANNER
-              value: "ghcr.io/samma-io/detect-dns-scanner:2.0.4"
+              value: "ghcr.io/samma-io/detect-dns-scanner:2.0.5"
             - name: SAMMA_SCANNER_IMAGE_HTTP_HEADERS_SCANNER
-              value: "ghcr.io/samma-io/detect-http-headers-scanner:2.0.4"
+              value: "ghcr.io/samma-io/detect-http-headers-scanner:2.0.5"
             - name: SAMMA_SCANNER_IMAGE_HTTP_REDIRECT_SCANNER
-              value: "ghcr.io/samma-io/detect-http-redirect-scanner:2.0.4"
+              value: "ghcr.io/samma-io/detect-http-redirect-scanner:2.0.5"
             - name: SAMMA_SCANNER_IMAGE_PORT_SCANNER
-              value: "ghcr.io/samma-io/detect-port-scanner:2.0.4"
+              value: "ghcr.io/samma-io/detect-port-scanner:2.0.5"
             - name: SAMMA_SCANNER_IMAGE_SSH_BANNER_SCANNER
-              value: "ghcr.io/samma-io/detect-ssh-banner-scanner:2.0.4"
+              value: "ghcr.io/samma-io/detect-ssh-banner-scanner:2.0.5"
             - name: SAMMA_SCANNER_IMAGE_TLS_SCANNER
-              value: "ghcr.io/samma-io/detect-tls-scanner:2.0.4"
+              value: "ghcr.io/samma-io/detect-tls-scanner:2.0.5"
             - name: SAMMA_SCANNER_IMAGE_TRACEROUTE_SCANNER
-              value: "ghcr.io/samma-io/detect-traceroute-scanner:2.0.4"
+              value: "ghcr.io/samma-io/detect-traceroute-scanner:2.0.5"
             - name: SAMMA_SCANNER_IMAGE_WHOIS_SCANNER
-              value: "ghcr.io/samma-io/detect-whois-scanner:2.0.4"
+              value: "ghcr.io/samma-io/detect-whois-scanner:2.0.5"
             # nmap and nikto, pinned to the builds this operator was tested
             # with (the chart's scanners.classicTags).
             - name: SAMMA_SCANNER_IMAGE_NIKTO
