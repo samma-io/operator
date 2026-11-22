@@ -143,6 +143,8 @@ class BridgeMetrics(object):
         self.runs_pending = r.gauge("samma_bridge_runs_pending", "Runs waiting for their run message or for stragglers.")
         self.db_rows = r.counter("samma_bridge_db_rows_total", "Rows inserted into TimescaleDB.")
         self.db_errors = r.counter("samma_bridge_db_errors_total", "TimescaleDB inserts that failed.")
+        self.nats_connected = r.gauge("samma_bridge_nats_connected", "1 while the NATS connection is up, 0 while it is down or reconnecting.")
+        self.db_connected = r.gauge("samma_bridge_db_connected", "1 while the TimescaleDB connection is open. 0 while connecting, after it was lost, and when TimescaleDB storage is off.")
         self.finalize_seconds = r.summary("samma_bridge_finalize_seconds", "Seconds from a run message to its ScanReport write.")
 
     def render(self):

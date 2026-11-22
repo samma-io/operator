@@ -1,0 +1,45 @@
+{{- /*
+PodMonitors, not ServiceMonitors: the bridge has no Service, and a pod selector
+is not affected by a GitOps tool relabelling the Services.
+Not gated on .Capabilities: a GitOps render (`helm template`) has no cluster.
+*/ -}}
+{{- if .Values.metrics.podMonitor.enabled }}
+{{- $m := .Values.metrics.podMonitor }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: samma-bridge
+  namespace: {{ .Values.namespace }}
+  {{- with $m.labels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app: samma-bridge
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ $m.interval }}
+{{- if .Values.api.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: samma-api
+  namespace: {{ .Values.namespace }}
+  {{- with $m.labels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app: samma-api
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      interval: {{ $m.interval }}
+{{- end }}
+{{- end }}

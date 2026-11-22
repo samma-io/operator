@@ -641,7 +641,7 @@ manifest):
 | Policy | Selects | Allows |
 |---|---|---|
 | `samma-nats` | the NATS pod (while `nats.enabled` is on) | ingress on 4222 from pods in the release namespace only; on 8222 too while `nats.monitoring` is true |
-| `samma-api` | the API pod | ingress on 8080 from pods in the release namespace and from the namespaces in `networkPolicies.apiClients` only |
+| `samma-api` | the API pod | ingress on 8080 from pods in the release namespace, from the namespaces in `networkPolicies.apiClients` and from the peers in `networkPolicies.metricsClients` (Prometheus) only |
 | `samma-bridge` | the bridge | egress to NATS (the external one through `networkPolicies.externalNats` while `nats.enabled` is off, see [External NATS](#external-nats)), TimescaleDB (while `bridge.storeInTimescaleDB` is on), DNS, and the Kubernetes API server |
 | `samma-scanners` | scan pods (`app.kubernetes.io/managed-by=samma-operator`, `samma.io/role=scanner`) | egress to DNS, NATS (likewise), public addresses, and the ingress controller pods in `networkPolicies.ingressControllers` on their serving ports |
 | `samma-timescaledb` | the TimescaleDB pod (while `timescaledb.enabled` is on) | ingress on 5432 from the bridge and from the namespaces in `networkPolicies.timescaledbClients` only |
@@ -702,6 +702,39 @@ A NetworkPolicy is only enforced by a CNI that implements it (Calico, Cilium, An
 and most managed offerings do; Flannel on its own does not). Without such a CNI the objects are
 accepted and do nothing. Check with your cluster's documentation, or create a policy that denies
 everything in a test namespace and see whether it holds.
+
+---
+
+## Prometheus metrics
+
+| Component | Endpoint | What |
+|---|---|---|
+| bridge | `:9100/metrics` | messages received, rejected and dropped by reason, ScanReport writes, TimescaleDB rows and errors, `samma_bridge_nats_connected`, `samma_bridge_db_connected` |
+| api | `:8080/metrics` | request counts and durations by method, path and status (`flask_http_request_*`). No token needed; every other endpoint still needs one |
+| collector | `:9100/metrics` | see [Collector](#collector) |
+
+With the Prometheus Operator (kube-prometheus-stack), let the chart create PodMonitors for the
+bridge and the api:
+
+```yaml
+metrics:
+  podMonitor:
+    enabled: true
+networkPolicies:
+  # The samma-api policy drops the scrape unless Prometheus is listed.
+  metricsClients:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}
+      podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}
+```
+
+`metricsClients` takes NetworkPolicyPeers. Name the Prometheus pods rather than a whole
+namespace: the entry opens port 8080 of the api, which launches scans, and only the bearer token
+stands between a listed pod and the other endpoints. The bridge has no ingress policy, so its
+port needs no entry. `metrics.podMonitor.labels` adds labels for a Prometheus that selects its
+monitors by label.
+
+`samma_bridge_db_connected` is 0 when `bridge.storeInTimescaleDB` is off, so alert on it only
+where the bridge stores rows.
 
 ---
 
