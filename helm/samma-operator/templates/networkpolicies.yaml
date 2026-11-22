@@ -85,6 +85,10 @@ spec:
         - ipBlock:
             cidr: {{ . }}
         {{- end }}
+        {{- with .Values.networkPolicies.metricsClients }}
+        # Prometheus, for GET /metrics (networkPolicies.metricsClients).
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       ports:
         - port: 8080
           protocol: TCP

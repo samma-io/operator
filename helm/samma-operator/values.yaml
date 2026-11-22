@@ -242,6 +242,17 @@ nats:
     scannerPassword: ""
     bridgePassword: ""
 
+# Prometheus (README, "Prometheus metrics")
+metrics:
+  # PodMonitors for the Prometheus Operator (needs its CRDs): the bridge
+  # (9100 /metrics) and, with api.enabled, the api (8080 /metrics). With
+  # NetworkPolicies on, list Prometheus in networkPolicies.metricsClients
+  # too, or the api scrape is dropped.
+  podMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+
 # NetworkPolicies for NATS, the bridge and the scanner pods (README,
 # "Network policies"). Enforced only by a CNI that implements NetworkPolicy.
 networkPolicies:
@@ -260,6 +271,14 @@ networkPolicies:
   # Addresses (CIDRs) outside the cluster allowed to reach the API on 8080,
   # for api.service.type NodePort, e.g. ["10.1.0.3/32"].
   apiClientCidrs: []
+  # Who may scrape Prometheus metrics: NetworkPolicyPeers added to the
+  # samma-api policy on 8080 (GET /metrics needs no token; every other
+  # endpoint still does). Name the Prometheus pods, not a whole namespace:
+  #   metricsClients:
+  #     - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}
+  #       podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}
+  # The bridge (9100) has no ingress policy and needs no entry.
+  metricsClients: []
   # Namespaces allowed to reach TimescaleDB on 5432 (the samma-timescaledb
   # policy), matched through the automatic kubernetes.io/metadata.name
   # label every namespace carries. Listing a namespace allows every pod in

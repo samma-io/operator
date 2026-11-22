@@ -62,7 +62,7 @@ INSERT_ROW = """INSERT INTO scan_results
 TICK_SECONDS = 1.0
 
 
-async def connect_database(url, setup=True):
+async def connect_database(url, setup=True, metrics=None):
     import asyncpg  # third-party, installed in the image
 
     while True:
@@ -72,6 +72,8 @@ async def connect_database(url, setup=True):
         except Exception as exc:
             log.warning("DB not ready, retrying in 5s: %s", exc)
             await asyncio.sleep(5)
+    if metrics is not None:
+        metrics.db_connected.set(1)
     if not setup:
         # DATABASE_SETUP=false: the schema belongs to the database's owner
         # and this login may only insert; creating it would be refused.
@@ -84,8 +86,20 @@ async def connect_database(url, setup=True):
     return db
 
 
-async def connect_nats(config):
+async def connect_nats(config, metrics=None):
     import nats  # third-party, installed in the image
+
+    def connected(value):
+        if metrics is not None:
+            metrics.nats_connected.set(value)
+
+    async def disconnected():
+        connected(0)
+        log.warning("NATS disconnected")
+
+    async def reconnected():
+        connected(1)
+        log.info("NATS reconnected")
 
     options = config.nats_connect_options()
     options.update({
@@ -93,10 +107,11 @@ async def connect_nats(config):
         "max_reconnect_attempts": -1,
         "reconnect_time_wait": 2,
         "error_cb": _nats_error,
-        "disconnected_cb": _nats_disconnected,
-        "reconnected_cb": _nats_reconnected,
+        "disconnected_cb": disconnected,
+        "reconnected_cb": reconnected,
     })
     nc = await nats.connect(**options)
+    connected(1)
     how = "credentials file" if config.nats_creds else ("user {0}".format(config.nats_user) if config.nats_user else "no credentials")
     log.info("Connected to NATS at %s with %s", config.nats_url, how)
     return nc
@@ -104,14 +119,6 @@ async def connect_nats(config):
 
 async def _nats_error(exc):
     log.warning("NATS error: %s", exc)
-
-
-async def _nats_disconnected():
-    log.warning("NATS disconnected")
-
-
-async def _nats_reconnected():
-    log.info("NATS reconnected")
 
 
 async def main():
@@ -123,7 +130,7 @@ async def main():
              config.version, config.metrics_port, config.namespace,
              "on" if config.scanreports_enabled else "off", "on" if config.database_enabled else "off")
 
-    db = await connect_database(config.database_url, config.database_setup) if config.database_enabled else None
+    db = await connect_database(config.database_url, config.database_setup, metrics) if config.database_enabled else None
 
     pipeline = None
     index = None
@@ -144,7 +151,7 @@ async def main():
             accumulator=Accumulator(config.straggler_wait_seconds, config.run_idle_timeout_seconds),
         )
 
-    nc = await connect_nats(config)
+    nc = await connect_nats(config, metrics)
     writes = asyncio.Queue()
     loop = asyncio.get_running_loop()
 
@@ -165,6 +172,9 @@ async def main():
             metrics.db_rows.inc()
         except Exception as exc:
             metrics.db_errors.inc()
+            # The one connection is never reopened: once it is closed every
+            # later insert fails until the pod restarts.
+            metrics.db_connected.set(0 if db.is_closed() else 1)
             log.error("Failed to store message: %s", exc)
 
     def parse_counted(payload):

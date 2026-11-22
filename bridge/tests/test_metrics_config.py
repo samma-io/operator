@@ -46,6 +46,13 @@ class MetricsTests(unittest.TestCase):
         for name in ("samma_bridge_messages_received_total", "samma_bridge_messages_rejected_total", "samma_bridge_reports_written_total",
                      "samma_bridge_finalize_seconds_count", "samma_bridge_runs_pending", "samma_bridge_db_rows_total"):
             self.assertIn(name, text)
+        self.assertIn("samma_bridge_nats_connected 0\n", text, "down until the bridge has connected")
+        self.assertIn("samma_bridge_db_connected 0\n", text)
+        bm.nats_connected.set(1)
+        bm.db_connected.set(1)
+        text = bm.render()
+        self.assertIn("samma_bridge_nats_connected 1\n", text)
+        self.assertIn("samma_bridge_db_connected 1\n", text)
 
     def _ipv6_loopback(self):
         if not socket.has_ipv6:

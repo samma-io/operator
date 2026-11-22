@@ -5,6 +5,15 @@ A release is a tag `v<version>` on `main`. Pushing it runs
 `oci://ghcr.io/samma-io/charts/samma-operator` and the images to
 `ghcr.io/samma-io/samma-{operator,api,bridge}` (README, "Releases").
 
+## Unreleased
+
+- Prometheus scraping for the bridge and the api. `metrics.podMonitor.enabled` (off by default)
+  adds PodMonitors for the bridge (`:9100/metrics`) and the api (`:8080/metrics`), and
+  `networkPolicies.metricsClients` lists the NetworkPolicyPeers allowed to reach the api for it.
+  README, "Prometheus metrics".
+- The bridge exposes `samma_bridge_nats_connected` and `samma_bridge_db_connected`. A lost NATS
+  connection and a TimescaleDB that was never reached, or was lost, were only visible in the log.
+
 ## 0.2.12
 
 - The bridge now stores the run summaries (`kind: run`) in TimescaleDB. A
