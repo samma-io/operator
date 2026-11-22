@@ -11,6 +11,11 @@ A release is a tag `v<version>` on `main`. Pushing it runs
   adds PodMonitors for the bridge (`:9100/metrics`) and the api (`:8080/metrics`), and
   `networkPolicies.metricsClients` lists the NetworkPolicyPeers allowed to reach the api for it.
   README, "Prometheus metrics".
+- The operator serves Prometheus metrics on `:8080/metrics`, the port its Deployment and Service
+  already declared: Scanner events handled and rejected by reason, scan Jobs created, running and
+  waiting, bad Job outcomes, the queue length, the time of the last queue tick, and target
+  registrations on samma.io by result. `metrics.podMonitor.enabled` scrapes it too. No label
+  carries a target or a tenant id.
 - The bridge exposes `samma_bridge_nats_connected` and `samma_bridge_db_connected`. A lost NATS
   connection and a TimescaleDB that was never reached, or was lost, were only visible in the log.
 

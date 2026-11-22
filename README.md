@@ -710,11 +710,12 @@ everything in a test namespace and see whether it holds.
 | Component | Endpoint | What |
 |---|---|---|
 | bridge | `:9100/metrics` | messages received, rejected and dropped by reason, ScanReport writes, TimescaleDB rows and errors, `samma_bridge_nats_connected`, `samma_bridge_db_connected` |
+| operator | `:8080/metrics` | Scanner events handled and rejected by reason, scan Jobs created, running and waiting for a slot, Jobs that failed or timed out, queue length, time of the last queue tick, target registrations on samma.io by result |
 | api | `:8080/metrics` | request counts and durations by method, path and status (`flask_http_request_*`). No token needed; every other endpoint still needs one |
 | collector | `:9100/metrics` | see [Collector](#collector) |
 
 With the Prometheus Operator (kube-prometheus-stack), let the chart create PodMonitors for the
-bridge and the api:
+bridge, the operator and the api:
 
 ```yaml
 metrics:
