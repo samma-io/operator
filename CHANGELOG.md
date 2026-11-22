@@ -5,7 +5,7 @@ A release is a tag `v<version>` on `main`. Pushing it runs
 `oci://ghcr.io/samma-io/charts/samma-operator` and the images to
 `ghcr.io/samma-io/samma-{operator,api,bridge}` (README, "Releases").
 
-## Unreleased
+## 0.2.13
 
 - Prometheus scraping for the bridge and the api. `metrics.podMonitor.enabled` (off by default)
   adds PodMonitors for the bridge (`:9100/metrics`) and the api (`:8080/metrics`), and
