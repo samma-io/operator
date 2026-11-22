@@ -245,7 +245,8 @@ nats:
 # Prometheus (README, "Prometheus metrics")
 metrics:
   # PodMonitors for the Prometheus Operator (needs its CRDs): the bridge
-  # (9100 /metrics) and, with api.enabled, the api (8080 /metrics). With
+  # (9100 /metrics), the operator (8080 /metrics) and, with api.enabled,
+  # the api (8080 /metrics). With
   # NetworkPolicies on, list Prometheus in networkPolicies.metricsClients
   # too, or the api scrape is dropped.
   podMonitor:

@@ -21,6 +21,7 @@ Job and CronJob bodies are built in jobspec.py; nothing here renders YAML.
 import logging
 import os
 import threading
+import time
 
 import kopf
 import requests
@@ -30,6 +31,7 @@ from kubernetes.client.rest import ApiException
 
 import ingress_optin
 import jobspec
+import opmetrics
 import scanreport
 import target_policy
 from profile_resolver import resolve_profiles
@@ -58,6 +60,9 @@ nats_enabled = os.getenv('NATS_ENABLED', 'True')
 nats_subject = os.getenv('NATS_SUBJECT', 'samma-io.scan')
 
 SETTINGS = jobspec.Settings.from_env()
+METRICS = opmetrics.OperatorMetrics()
+# /metrics and /healthz, on the port the Deployment and the Service declare.
+METRICS_PORT = int(os.getenv('METRICS_PORT', '8080'))
 NAMESPACE = SETTINGS.namespace
 
 ENV_DEFAULTS = {
@@ -232,6 +237,7 @@ def create_job(body):
     scanner share one Job)."""
     try:
         batch1api.create_namespaced_job(NAMESPACE, body)
+        METRICS.jobs_created.inc()
         logging.info("Created Job %s", body['metadata']['name'])
     except ApiException as exc:
         if exc.status != 409:
@@ -325,12 +331,31 @@ _drainer_stop = threading.Event()
 # Failed scan Jobs -> ScanReport status.lastRun
 # ---------------------------------------------------------------------------
 
+def observe_queue(jobs):
+    """The queue gauges, from the Job list the tick has read anyway."""
+    running = suspended = 0
+    for job in jobs:
+        status = job.status.to_dict() if job.status is not None else {}
+        spec = job.spec.to_dict() if job.spec is not None else {}
+        if jobspec.job_finished(status):
+            continue
+        if jobspec.job_suspended(spec):
+            suspended += 1
+        else:
+            running += 1
+    METRICS.jobs_running.set(running)
+    METRICS.jobs_suspended.set(suspended)
+    METRICS.queue_pending.set(len(scan_queue))
+    METRICS.last_tick.set(int(time.time()))
+
+
 def record_job_outcomes():
     """Runs on every queue tick. For each scan Job that failed (or hit its
     deadline) and whose scanner has a ScanReport, write the outcome into
     status.lastRun, creating the report with its spec when it is missing,
     then annotate the Job so this happens once. See scanreport.py."""
     jobs = batch1api.list_namespaced_job(NAMESPACE, label_selector=jobspec.LABEL_SCANNER).items
+    observe_queue(jobs)
     for job in jobs:
         metadata = job.metadata.to_dict() if job.metadata is not None else {}
         if scanreport.outcome_recorded(metadata):
@@ -365,6 +390,7 @@ def record_job_outcomes():
         except ApiException as exc:
             if exc.status != 404:
                 logging.warning("Could not annotate Job %s: %s", job_name, exc.reason)
+        METRICS.job_outcomes.inc(outcome)
         logging.info("Recorded %s run of %s (%s) in ScanReport %s", outcome, scanner, target, scanreport.report_name(scanner, template, target, samma_id))
 
 
@@ -420,6 +446,11 @@ def configure(settings, **_):
     # this storage writes it on opted-in Ingresses only (ingress_optin.py).
     settings.persistence.diffbase_storage = ingress_optin.make_diffbase_storage()
     init_operator()
+    try:
+        opmetrics.start_http_server(METRICS.registry, METRICS_PORT)
+        logging.info("Metrics on :%d/metrics", METRICS_PORT)
+    except OSError as exc:  # metrics are not worth a crash loop
+        logging.warning("Could not serve metrics on :%d: %s", METRICS_PORT, exc)
     _, _drainer_stop = start_drainer(scan_queue, SETTINGS.queue_interval_seconds, on_tick=record_job_outcomes)
     logging.info(
         "samma operator in namespace %s: max %d concurrent scans, deadline %ds, nmap raw sockets %s, "
@@ -455,8 +486,10 @@ def post_target_to_api(host):
             headers["X-Samma-Version"] = samma_version
     try:
         resp = requests.put(url, json=payload, headers=headers, timeout=10)
+        METRICS.registrations.inc("ok" if resp.status_code < 400 else "refused")
         logging.info("Registered target %s on samma.io: HTTP %s", host, resp.status_code)
     except Exception as exc:
+        METRICS.registrations.inc("error")
         logging.warning("Failed to post target %s to API: %s", host, exc)
 
 
@@ -473,11 +506,14 @@ def validate_scanner(body, retry):
         target_policy.check_target(target, networking_api=networking_api)
     except target_policy.TargetUnresolvable as exc:
         if retry >= MAX_RESOLVE_RETRIES:
+            METRICS.scanners_rejected.inc("target-rejected")
             kopf.warn(body, reason='TargetRejected', message="{0}; giving up after {1} attempts".format(exc, retry + 1))
             raise kopf.PermanentError(str(exc))
+        METRICS.scanners_rejected.inc("target-unresolvable")
         kopf.warn(body, reason='TargetUnresolvable', message=str(exc))
         raise kopf.TemporaryError("{0}; retrying in 5 minutes".format(exc), delay=RESOLVE_RETRY_DELAY)
     except target_policy.TargetRejected as exc:
+        METRICS.scanners_rejected.inc("target-rejected")
         kopf.warn(body, reason='TargetRejected', message=str(exc))
         raise kopf.PermanentError(str(exc))
 
@@ -489,6 +525,7 @@ def validate_scanner(body, retry):
             target_policy.validate_scanner_name(scanner)
         target_policy.validate_schedule(scheduler)
     except target_policy.TargetRejected as exc:
+        METRICS.scanners_rejected.inc("scanner-rejected")
         kopf.warn(body, reason='ScannerRejected', message=str(exc))
         raise kopf.PermanentError(str(exc))
 
@@ -500,6 +537,7 @@ def validate_scanner(body, retry):
         kopf.warn(body, reason='ScannerNotAllowed',
                   message="Scanner {0!r} is not in this operator's allowed scanners (SAMMA_ALLOWED_SCANNERS) and was skipped".format(name))
     if not runs:
+        METRICS.scanners_rejected.inc("no-scanner")
         if refused:
             raise kopf.PermanentError("none of the requested scanners {0} is allowed on this operator".format(scanners))
         raise kopf.PermanentError("none of the requested scanners {0} is known".format(scanners))
@@ -621,6 +659,7 @@ def create_fn(body, retry, patch, **kwargs):
     jobs, cronjobs = build_or_clear(body, retry)
     reconcile_cronjobs(body, cronjobs)
     submit_jobs(body, jobs, patch)
+    METRICS.scanners_handled.inc("create")
     logging.info("Scanner %s: %d scanners against %s", body['metadata']['name'], len(jobs), body['spec'].get('target'))
 
 
@@ -633,6 +672,7 @@ def resume_fn(body, retry, patch, **kwargs):
     not repeated."""
     jobs, cronjobs = build_or_clear(body, retry)
     reconcile_cronjobs(body, cronjobs)
+    METRICS.scanners_handled.inc("resume")
     annotations = body['metadata'].get('annotations') or {}
     if annotations.get(jobspec.ANNOTATION_INITIAL_SCAN) != jobspec.INITIAL_SCAN_QUEUED:
         return
@@ -645,6 +685,7 @@ def update_fn(body, retry, **kwargs):
     # A rejected spec deletes the CronJobs: nothing may keep running against it.
     _, cronjobs = build_or_clear(body, retry)
     reconcile_cronjobs(body, cronjobs)
+    METRICS.scanners_handled.inc("update")
 
 
 @kopf.on.delete(GROUP, VERSION, PLURAL, optional=True)
@@ -668,6 +709,7 @@ def delete_fn(body, **kwargs):
                 except ApiException as exc:
                     if exc.status != 404:
                         logging.warning("Could not delete legacy object %s: %s", name, exc.reason)
+    METRICS.scanners_handled.inc("delete")
     logging.info("Scanner %s deleted", meta['name'])
 
 
